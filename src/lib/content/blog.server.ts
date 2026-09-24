@@ -71,7 +71,7 @@ const shikiLanguageMap: Record<string, string> = {
 };
 
 function parseFrontmatter(source: string): BlogFrontmatter {
-	const match = source.match(/^---\n([\s\S]*?)\n---/);
+	const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---/);
 
 	if (!match) {
 		throw new Error('Missing frontmatter in blog post.');
@@ -79,7 +79,7 @@ function parseFrontmatter(source: string): BlogFrontmatter {
 
 	const frontmatter: Record<string, string> = {};
 
-	for (const rawLine of match[1].split('\n')) {
+	for (const rawLine of match[1].split(/\r?\n/)) {
 		const line = rawLine.trim();
 
 		if (!line) {
