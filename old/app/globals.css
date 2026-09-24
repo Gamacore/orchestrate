@@ -1,0 +1,100 @@
+@import 'tailwindcss';
+
+:root {
+	--background: #f5f5f4;
+	--foreground: #1c1917;
+	--muted: #57534e;
+}
+
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-muted: var(--muted);
+	--font-sans: ui-sans-serif, system-ui, sans-serif;
+}
+
+/* System preference (default) */
+@media (prefers-color-scheme: dark) {
+	:root:not(.light) {
+		--background: #1c1917;
+		--foreground: #e7e5e4;
+		--muted: #a8a29e;
+	}
+}
+
+/* Force dark mode */
+:root.dark {
+	--background: #1c1917;
+	--foreground: #e7e5e4;
+	--muted: #a8a29e;
+}
+
+/* Force light mode */
+:root.light {
+	--background: #f5f5f4;
+	--foreground: #1c1917;
+	--muted: #57534e;
+}
+
+html {
+	min-height: 100%;
+	background-color: var(--background);
+	transition: background-color 0.3s ease;
+}
+
+body {
+	min-height: 100%;
+	background-color: var(--background);
+	color: var(--foreground);
+	font-family: ui-sans-serif, system-ui, sans-serif;
+	transition:
+		background-color 0.3s ease,
+		color 0.3s ease;
+}
+
+/* Smooth theme transitions */
+*,
+*::before,
+*::after {
+	transition-property: background-color, border-color, color;
+	transition-duration: 0.3s;
+	transition-timing-function: ease;
+}
+
+/* Instant color changes for SVGs and masked elements to prevent flickering */
+svg,
+svg *,
+[style*='mask-image'],
+[style*='mask-image'] * {
+	transition: none !important;
+}
+
+/* Square bullets */
+ul {
+	list-style: none;
+	padding-left: 0;
+}
+
+ul li {
+	position: relative;
+	padding-left: 1rem;
+}
+
+ul li::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	top: 0.5em;
+	width: 4px;
+	height: 4px;
+	background-color: currentColor;
+	opacity: 0.5;
+}
+
+/* Hover transitions - use additive properties to not override theme transitions */
+a,
+button {
+	transition-property: background-color, border-color, opacity, transform;
+	transition-duration: 0.2s;
+	transition-timing-function: ease;
+}

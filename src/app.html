@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="text-scale" content="scale" />
+		<script>
+			(function () {
+				try {
+					var ua = navigator.userAgent || '';
+					var platform =
+						(navigator.userAgentData && navigator.userAgentData.platform) ||
+						navigator.platform ||
+						'';
+					var isMac = /Mac|iPhone|iPad|iPod/i.test(platform) || /Mac OS X/i.test(ua);
+					if (isMac) {
+						document.documentElement.classList.add('is-mac');
+					}
+				} catch (error) {
+					console.warn('Unable to detect platform.', error);
+				}
+			})();
+		</script>
+		<script>
+			(function () {
+				var THEME_KEY = 'arcten-theme';
+				var root = document.documentElement;
+
+				function isThemeMode(value) {
+					return value === 'light' || value === 'dark' || value === 'system';
+				}
+
+				function getStoredTheme() {
+					try {
+						var storedTheme = localStorage.getItem(THEME_KEY);
+						return isThemeMode(storedTheme) ? storedTheme : 'system';
+					} catch (error) {
+						console.warn('Unable to restore theme preference.', error);
+						return 'system';
+					}
+				}
+
+				function applyTheme(theme) {
+					root.classList.remove('light', 'dark');
+					root.dataset.themeMode = theme;
+
+					if (theme === 'light' || theme === 'dark') {
+						root.classList.add(theme);
+					}
+				}
+
+				function syncThemeButtons(theme) {
+					var buttons = document.querySelectorAll('[data-theme-toggle]');
+
+					for (var index = 0; index < buttons.length; index += 1) {
+						var button = buttons[index];
+						var isActive = button.getAttribute('data-theme-toggle') === theme;
+						button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+					}
+				}
+
+				var initialTheme = getStoredTheme();
+				applyTheme(initialTheme);
+
+				document.addEventListener('click', function (event) {
+					var target = event.target;
+
+					if (!(target instanceof Element)) {
+						return;
+					}
+
+					var button = target.closest('[data-theme-toggle]');
+
+					if (!(button instanceof HTMLElement)) {
+						return;
+					}
+
+					var nextTheme = button.getAttribute('data-theme-toggle');
+
+					if (!isThemeMode(nextTheme)) {
+						return;
+					}
+
+					applyTheme(nextTheme);
+					syncThemeButtons(nextTheme);
+
+					try {
+						localStorage.setItem(THEME_KEY, nextTheme);
+					} catch (error) {
+						console.warn('Unable to persist theme preference.', error);
+					}
+				});
+
+				document.addEventListener('DOMContentLoaded', function () {
+					syncThemeButtons(getStoredTheme());
+				});
+			})();
+		</script>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>
