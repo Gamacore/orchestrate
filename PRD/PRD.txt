@@ -1,0 +1,132 @@
+# Arcten — MVP PRD
+
+**Product:** Shared internal tools with agents that keep them running.
+
+**Promise:** Describe the tool your company needs. Arcten builds it, hosts it, and runs the agents behind it. Share it with your team.
+
+**Advantage to validate:** Teammates can operate, troubleshoot, and change the tool without keeping its creator on call.
+
+**Status:** Proposed MVP. Customer demand and competitive advantage remain to be validated.
+
+## 1. Problem
+
+**Problem hypothesis:** Creating an agent or prototype is easier than turning it into something a team can depend on. Sharing, failed runs, integration setup, unpredictable costs, and maintenance still create work for the creator.
+
+Arcten combines YC’s request for easier deployment and sharing of small software with its request for teammates to participate in the same ongoing agent work.  
+
+The product should compete on **less administration after deployment**, not the number of integrations or agents it supports.
+
+## 2. Initial customer and scope
+
+**Customer:** YC founders and small teams managing a recurring process that involves more than one person.
+
+**Buyer/creator:** A founder or team lead who configures the process.
+
+**Daily user:** A teammate who needs to check progress, resolve a blocker, or approve an action without learning how the agent works.
+
+**Initial product boundary:** Shared trackers, forms, and approval queues with background agents. Not arbitrary software generation.
+
+### Proposed first workflow
+
+> “Create a customer-onboarding tracker using our playbook. Keep it updated from Linear, flag overdue tasks, and draft customer follow-ups.”
+
+Start with uploaded company documents and one integration—**Linear as the initial candidate**. Generate customer-message drafts; automated external messaging is outside the first release.
+
+The workflow and connector choice should be confirmed with pilot customers.
+
+## 3. Core experience
+
+**Describe → connect → test → publish → share → operate.**
+
+The creator describes the process in a document-style editor or adapts a starter template. Arcten requests the relevant sources and permissions, generates a working tool, and previews its behavior on sample inputs.
+
+After approval, Arcten publishes an authenticated URL and starts the background routine. A teammate opens that URL and sees:
+
+> **8 customers on track · 2 need approval · 1 blocked by a disconnected account**
+
+They can inspect completed work, resolve permitted issues, approve actions, or pause the agent. The tool continues running when the creator closes their browser.
+
+**Sharing grants access to the same deployed tool, data, and ongoing work—not a separate copy of the agent.**
+
+## 4. Product structure
+
+| Component            | Purpose                                                                |
+| -------------------- | ---------------------------------------------------------------------- |
+| **Small app**        | Provides forms, tables, status views, and approval buttons.            |
+| **Instructions**     | Describes the process and rules in editable plain English.             |
+| **Company context**  | Supplies explicitly selected, authorized documents and connected data. |
+| **Background agent** | Performs the work and maintains the tool’s state.                      |
+| **Managed runtime**  | Handles hosting, execution, access, recovery, and usage limits.        |
+
+**The app is where the team works. The agent performs the work. Arcten handles the infrastructure.**
+
+## 5. MVP requirements
+
+| Area                       | Required behavior                                                                                                                                                                                                |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Creation**               | Generate a tool using supported UI components and connector actions. Provide a working template rather than an empty agent builder. Show a test result before publishing.                                        |
+| **Document-style editing** | Let authorized users change instructions in plain English. Keep draft changes separate from the published version. Show what will change and test against saved examples.                                        |
+| **Deployment and sharing** | Publish an authenticated link. Invited teammates need no model configuration, separate billing setup, or personal deployment. The workspace pays for execution.                                                  |
+| **Shared operation**       | Let authorized teammates inspect the same run, supply missing information, pause it, approve actions, and redirect pending work. Record who intervened and when.                                                 |
+| **Company context**        | Use selected sources, show supporting references where relevant, and respect source permissions. Sharing a tool must not silently expose the creator’s private sources or credentials.                           |
+| **Persistent execution**   | Support manual and scheduled runs that survive closed browsers and worker restarts. Preserve inputs, published version, completed steps, and external-action results.                                            |
+| **Failure recovery**       | Explain what failed, what succeeded, and what is needed next. Resume from saved progress when safe. Do not blindly retry an external action whose outcome is unknown.                                            |
+| **Safe changes**           | Keep existing runs pinned to their starting version. Publish updates explicitly. Allow returning to a previous version without deleting tool data. Reverting a version does not undo completed external actions. |
+| **Cost control**           | Show estimated and recorded usage, with clear labels. Enforce run and workspace budgets, execution time limits, and step limits. Stop dispatching additional work when limits are reached and preserve progress. |
+| **Basic safeguards**       | Isolate company data and execution, protect credentials, and require approval for external writes during the pilot. Recheck authorization before executing approved actions.                                     |
+
+### Permissions
+
+Use a small permission model: **view, operate, edit, and approve**, with workspace administration controlling access, connections, and budgets. Someone who can operate a tool must not automatically gain permission to edit its behavior or credentials.
+
+### Execution behavior
+
+Show explicit states: **queued, running, waiting for approval, blocked, paused, completed, failed, canceled**.
+
+Pausing or redirecting takes effect at a safe checkpoint; the interface must not imply it can reverse an external action already underway. Concurrent commands must be serialized so two teammates cannot approve or execute the same action twice.
+
+## 6. Minimum interface
+
+| View             | What it contains                                                                   |
+| ---------------- | ---------------------------------------------------------------------------------- |
+| **Work**         | The operational tracker, current status, blockers, and pending decisions.          |
+| **Instructions** | Plain-English rules, authorized sources, test cases, and draft/published versions. |
+| **Activity**     | Human-readable actions, results, interventions, costs, and recovery controls.      |
+
+Users should understand **what happened, what happens next, and what needs them** without reading raw execution logs.
+
+## 7. Acceptance tests
+
+| Scenario                      | Passing behavior                                                                                                                  |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **Creator steps away**        | An invited teammate opens the tool, understands its status, and completes a permitted action without creator assistance.          |
+| **Background execution**      | A scheduled run completes while every user is offline; its results are visible on return.                                         |
+| **Connection failure**        | The tool preserves completed work, identifies the required authorization, and resumes after an authorized person restores access. |
+| **Uncertain external action** | A timeout after a write does not cause a duplicate write. The system verifies the outcome or requests review.                     |
+| **Mid-run edit**              | Editing draft instructions does not silently alter the active run or published tool.                                              |
+| **Budget exhaustion**         | A looping task stops dispatching additional work, retains progress, and explains the limit reached.                               |
+| **Unauthorized access**       | An uninvited user cannot access the tool, and an operator cannot exceed their granted permissions.                                |
+
+## 8. Out of scope
+
+iMessage and terminal interfaces; Slack as a frontend; local execution; public agent marketplaces; arbitrary-code hosting; elaborate subagent coordination; voice and image generation; unrestricted company-wide memory; autonomous repair of every integration failure.
+
+Use approved components and connector actions initially. **Do not require a general-purpose software platform to validate the shared-tool experience.**
+
+## 9. Pilot and success measures
+
+**Proposed pilot:** Five YC teams, one recurring process per team, at least two users per tool, observed for four weeks.
+
+| Measure                                | What it establishes                                                            |
+| -------------------------------------- | ------------------------------------------------------------------------------ |
+| **Time to first shared use**           | How quickly creation turns into successful use by someone else.                |
+| **Human minutes per accepted outcome** | Setup, review, correction, and recovery effort—including Arcten’s assistance.  |
+| **Repeated team use**                  | Whether colleagues return and operate the tool without prompting.              |
+| **Correct completion and recovery**    | Whether the process meets agreed requirements, including when something fails. |
+| **Delivery cost**                      | Model, runtime, integration, and direct support costs relative to revenue.     |
+
+Compare against each team’s existing process or automation tool. Seek **lower human effort without worse output quality**.
+
+An initial continuation signal would be three of five teams choosing to keep paying after the pilot. This is a proposed decision criterion—not proof of product-market fit.
+
+**Ship criterion:** A founder creates a useful tool, a colleague takes responsibility for it, and ordinary changes or failures do not bring the work back to its creator.
