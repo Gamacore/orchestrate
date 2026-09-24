@@ -33,10 +33,10 @@
 				function getStoredTheme() {
 					try {
 						var storedTheme = localStorage.getItem(THEME_KEY);
-						return isThemeMode(storedTheme) ? storedTheme : 'system';
+						return isThemeMode(storedTheme) ? storedTheme : 'light';
 					} catch (error) {
 						console.warn('Unable to restore theme preference.', error);
-						return 'system';
+						return 'light';
 					}
 				}
 

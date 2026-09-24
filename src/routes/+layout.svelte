@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import '@fontsource-variable/geist';
 	import '../app.css';
-	import { FooterThemeToggle } from '$lib/ui';
+	import { SiteFooter } from '$lib/ui';
 	import { organizationJsonLd, siteConfig } from '$lib/config/site';
 
 	const jsonLdMarkup =
@@ -54,5 +54,5 @@
 
 <div class="flex min-h-screen flex-col">
 	{@render children()}
-	<FooterThemeToggle width={footerWidth} />
+	<SiteFooter width={footerWidth} />
 </div>

@@ -1,0 +1,497 @@
+# GPU Supply and Procurement — GLM‑5.2 FP8
+
+**Research date:** August 1, 2026. Prices are public list prices before negotiated discounts, taxes, credits, and Arcten’s non-GPU costs. “Available” below means publicly catalogued unless explicitly described as guaranteed; no public page proves that an exact 8-GPU node is allocatable at this instant.
+
+## 1. Executive conclusion
+
+### Procurement decision
+
+| Workload                            | Best public-price candidates                                                           | Recommendation                                                                                                                                             |
+| ----------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Now, capped-context H200**        | Verda on-demand **$32/node-hour**; Crusoe **$34.32**; Nebius **$36**                   | Benchmark and contract all three. Use one warm primary. Verda is cheapest but requires written commercial-use clearance and stronger reliability evidence. |
+| **Now, full-1M-context B200**       | Verda on-demand **$48.88**; Lambda **$53.52**; Nebius **$57.20**                       | Treat as a separate, more expensive SKU. Do not imply that an H200 deployment has the same context limit.                                                  |
+| **Flex, H200**                      | Verda spot **$11.20**; Nebius preemptible **$19.60**; CoreWeave spot **$20.64–$20.93** | Verda is the first experiment. Nebius is the second. Do not promise one- or five-minute completion from spot capacity.                                     |
+| **Flex, B200**                      | Verda spot **$17.12**; Nebius preemptible **$31.60**; CoreWeave spot **$34.11**        | Economically promising for long-context jobs, but interruption and cache-loss economics must be measured.                                                  |
+| **Guaranteed scheduled capacity**   | AWS Capacity Blocks; GCP Calendar mode; CoreWeave Reserved/Flex                        | Use as backstop or committed base capacity, not as the cost floor.                                                                                         |
+| **Exclude pending contract change** | Vast.ai                                                                                | Its public terms prohibit service-bureau use.                                                                                                              |
+
+### Main conclusions
+
+1. **Do not make the proposed price card binding yet.** Under a plausible sustained H200 scenario, Arcten must sustain approximately **2,835 aggregate output tokens/s per 8×H200 node merely to break even** at the $4.40/M Now output price, and about **3,780 tokens/s for a 25% gross margin**. At low load, the required throughput becomes approximately 16,500 tokens/s, illustrating that utilization is more important than the lowest catalog rate.
+
+2. **The $1.40 input / $0.26 cached / $4.40 output “Now” target is already the public GLM‑5.2 list price at both Together and Crusoe.** This establishes a market reference, not Arcten’s achievable COGS. Neither public price page establishes identical checkpoint hashes, tokenizer hashes, context limits, KV-cache precision, or serving behavior. ([Together AI][1])
+
+3. **Exact GLM‑5.2 FP8 is an 8-GPU node procurement problem.** The official model card describes a roughly 753B-parameter FP8 checkpoint and 1M context. The official vLLM recipe places single-node FP8 serving on 8×H200-class hardware but uses 8×B200 with FP8 KV cache for full 1M context. An H200 service with a lower context cap and a B200 service with full 1M context are not equivalent products. ([Hugging Face][2])
+
+4. **The cheapest credible Flex capacity is Verda spot**, but it can be reclaimed without warning, including shortly after creation. Its raw H200 price is 67.4% below Crusoe H200 on-demand, but a scenario-based effective saving is much wider—approximately **16% to 73%, central case 52%**—after utilization, retries, cache destruction, and ancillary costs. This is a planning range, not a statistical confidence interval. ([Verda][3])
+
+5. **A multi-provider fleet is justified for option value and reliability, not automatically for lower COGS.** The recommended topology is:
+
+   * one warm, non-preemptible primary;
+   * one interruptible overflow provider;
+   * one cold or scheduled break-glass provider.
+
+   Running duplicate warm fleets across several providers at low load will increase COGS and fragment batching and prefix caches.
+
+---
+
+## 2. Exact service boundary and quality classification
+
+| Dimension                                         | Required classification                                      | Implication                                                                                                                     |
+| ------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Checkpoint and tokenizer artifacts                | **Bitwise identity**                                         | Pin model revision SHA, every shard checksum, tokenizer files, chat template, generation configuration, and container digest.   |
+| H200 versus B200 execution                        | Intended **mathematical equivalence**, not bitwise identity  | Different GPUs, kernels, reduction order, batching, and CUDA/NCCL versions can change floating-point results.                   |
+| Stochastic outputs across providers               | Must demonstrate **distribution preservation**               | Compare token distributions and repeated-sample behavior; matching model names are insufficient.                                |
+| FP8 KV cache versus BF16 KV cache                 | **Lossy approximation**                                      | KV-cache dtype must be part of the advertised service specification. Full 1M serving in the referenced B200 recipe uses FP8 KV. |
+| NVFP4, MXFP4, INT4, AWQ, GPTQ, or similar weights | **Lossy approximation**                                      | Excluded from comparison with the FP8 checkpoint.                                                                               |
+| H200 capped context versus B200 1M context        | Different service specification                              | It violates the brief to present the capped H200 deployment as equivalent to full-context B200 service.                         |
+| Spot retry on a deterministic request             | Same artifacts, but not necessarily bitwise-identical output | A retry can change stochastic output unless seed and execution conditions are controlled.                                       |
+| Procurement, queueing, and request aggregation    | No inherent model-quality change                             | They affect latency, availability, and completion distribution, not weight identity.                                            |
+
+The official deployment guidance currently calls for vLLM 0.23.0 or newer or SGLang 0.5.13.post1 or newer. These versions should be pinned for testing rather than treated as open-ended minimums. ([vLLM Recipes][4])
+
+---
+
+## 3. Current supply map
+
+### 3.1 Public prices for evidenced 8-GPU shapes
+
+All values are dollars per **8-GPU node-hour**. “Spot” includes provider-specific preemptible or reclaimable products.
+
+| Provider      |                                                                                           8×H200 |                                                                              8×B200 | Capacity product and assessment                                                                                                                                                                        |
+| ------------- | -----------------------------------------------------------------------------------------------: | ----------------------------------------------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Verda**     |                    **$11.20 spot**; **$32 OD**; serverless compute $12.32 spot / $35.20 standard |    **$17.12 spot**; **$48.88 OD**; serverless compute $18.80 spot / $53.76 standard | Cheapest exact public list prices found. Spot has no useful availability guarantee. Commercial terms require clarification. ([Verda][3])                                                               |
+| **Nebius**    |                                                               **$19.60 preemptible**; **$36 OD** |                                               **$31.60 preemptible**; **$57.20 OD** | Strong second-source candidate. One-second billing and explicit 60-second preemption signal, but capacity is not guaranteed. ([Nebius AI Cloud][5])                                                    |
+| **CoreWeave** |                                                    **$20.64 EU / $20.93 NA spot**; **$50.44 OD** |                                                      **$34.11 spot**; **$68.80 OD** | Reserved and Flex products can guarantee capacity; OD and spot cannot. More expensive but operationally attractive as a contracted backstop. ([CoreWeave][6])                                          |
+| **Together**  | **$47.92 OD**; reserved: $39.92 for 7–30 days, $33.20 for 31–90 days, **$31.92 for 91–180 days** | **$65.52 OD**; reserved: $63.92, $62.32, and **$54.32** for the corresponding terms | The 91–180-day H200 rate can beat public OD alternatives if utilization is already proven. No public spot product. ([Together AI][1])                                                                  |
+| **Crusoe**    |                                                            **$34.32 OD**; managed deployment $48 |                                                    Public B200 price requires quote | Strong exact H200 OD candidate with no network ingress/egress charge. Public GLM‑5.2 serverless price matches Arcten’s Now target. ([Crusoe][7])                                                       |
+| **GCP**       |                                                       **$42.40 Flex-start**; **$59.36 Calendar** |                                          **$64.44 Flex-start**; **$90.22 Calendar** | Flex-start can queue for up to two hours and is therefore Flex/batch capacity, not Priority or Standard capacity. Calendar purchases scheduled capacity. ([Google Cloud][8])                           |
+| **AWS**       |                                                                        **$47.76 Capacity Block** |                                                           **$98.84 Capacity Block** | Expensive but scheduled and contractable. The customer pays for the reserved block rather than actual productive token time. ([Amazon Web Services, Inc.][9])                                          |
+| **Lambda**    |                                                          No exact public H200 self-service price |                                                          **$53.52 self-service OD** | Attractive B200 Now candidate. Self-service capacity is first-come; cluster reservations start at 16 GPUs and two weeks. ([Lambda][10])                                                                |
+| **Azure**     |          **$84.80 lowest current rate observed** for `ND96isr_H200_v5`; many regions were higher |                               No comparable exact current public B200 price located | Excellent topology but not price-competitive. Price confidence is medium because it was obtained through Azure’s retail-price data path rather than a stable static SKU table. ([Microsoft Learn][11]) |
+| **OCI**       |                                                                   **$80 OD** for `BM.GPU.H200.8` |                                           No comparable current public rate located | Exact H200 shape with strong RDMA, but materially above specialist-cloud alternatives. ([Oracle][12])                                                                                                  |
+
+**OD = on demand.** These rankings can change under negotiated contracts. In particular, CoreWeave, Crusoe, Nebius, Lambda, and hyperscaler enterprise discounts may materially alter the public-price ordering.
+
+### 3.2 Operational, topology, storage, and legal evidence
+
+| Provider      | Billing, minimum, and startup                                                                                                                                                                                                        | Topology                                                                                                                             | Storage and egress                                                                                                                                                            | Availability, reliability, and commercial-use issue                                                                                                                                                                                                                                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Verda**     | Prepaid in ten-minute increments; unused prepaid time is carried/refunded under its billing rules. Self-service instances are presented as immediately launchable; larger clusters are described as becoming operational in minutes. | Exact 1/2/4/8-GPU H200 and B200 NVLink configurations. Larger instant clusters expose InfiniBand.                                    | Container registry **$0.20/GiB-month**; pulls to Verda compute do not incur egress.                                                                                           | Console exposes current SKU availability, but spot can be reclaimed without warning. Public terms restrict reselling, renting, licensing, or transferring the service and constrain services predominantly composed of Verda; Arcten needs a written amendment or approval. Vendor uptime claims are not independent evidence. ([Verda Documentation][13]) |
+| **Nebius**    | One-second billing. Preemptible nodes receive a documented 60-second SIGTERM, may be stopped at any time, and do not automatically recover.                                                                                          | NVLink in-node; up to 400 Gbps per GPU and 3.2 Tbps per node with GPUDirect RDMA.                                                    | Network disk around **$0.071/GiB-month**; object storage approximately **$0.0147/GiB-month** in the referenced region/SKU.                                                    | H200 is catalogued across several European and US regions; B200 in selected regions. Live 8-GPU stock was not tested. Commercial hosted-inference rights should be put in writing. ([Nebius AI Cloud][5])                                                                                                                                                  |
+| **CoreWeave** | OD and spot have no capacity guarantee. Reserved and Flex capacity can be guaranteed, with pricing, lead time, and holding charges depending on contract.                                                                            | Public 8×HGX H200/B200 nodes with in-node high-speed interconnect; cluster fabric depends on deployment.                             | Hot object storage $0.06/GB-month; warm $0.03; cold $0.015; archive $0.0125; distributed filesystem $0.07. Public pricing lists no separate egress charge for these services. | Better capacity-contracting options than marketplace clouds, but public spot/OD catalog entries are not evidence of immediate stock. Hosted-inference terms belong in the capacity contract. ([CoreWeave][6])                                                                                                                                              |
+| **Crusoe**    | OD is billed hourly or per second with no stated minimum. Infrastructure launch may take approximately a minute, but that excludes downloading and initializing the roughly 0.8 TiB model artifact.                                  | Exact 8×H200 SXM5 node with 3.2 Tbps InfiniBand. Public B200 shapes also exist, but pricing is quote-based.                          | Persistent storage $0.08/GiB-month; shared storage $0.07; registry $0.10; object storage $0.06. No network ingress/egress charge.                                             | Some restricted SKUs may not immediately provision. Public pricing does not by itself grant retail API resale rights. ([Crusoe][7])                                                                                                                                                                                                                        |
+| **AWS**       | Capacity Blocks cover 1–64 instances, can extend up to six months, and may be reserved weeks ahead. The full block is charged whether or not tokens are generated.                                                                   | Exact 8-GPU P5e H200 and P6 B200 shapes, with NVLink/NVSwitch-class in-node fabric and EFA for scale-out.                            | Representative S3 Standard price approximately $0.023/GB-month; internet egress is region- and tier-dependent and can be around $0.09/GB.                                     | Scheduled capacity is materially more reliable than hoping for OD/spot quota. AWS partner status alone does not authorize raw resale or sublicensing; Arcten must sell its application under the applicable agreement. ([Amazon Web Services, Inc.][9])                                                                                                    |
+| **GCP**       | Flex-start is usage-billed but may queue for up to two hours and has a maximum run duration. Calendar mode reserves and charges the scheduled period, currently up to 90 days.                                                       | A3 Ultra H200 and A4 B200 expose exact 8-GPU shapes with all-to-all in-node NVLink and high-bandwidth network interfaces.            | Regional Standard Cloud Storage approximately $0.020/GiB-month; same-location access can be free, while external egress is destination-dependent.                             | Flex-start does not satisfy an approximately one- or five-minute acquisition promise. GCP terms permit an application with material independent value but not repackaging raw GCP service. ([Google Cloud][8])                                                                                                                                             |
+| **Azure**     | Current exact-SKU billing granularity, launch time, quota success, and reservation price were not sufficiently evidenced in the reviewed public material.                                                                            | `ND96isr_H200_v5`: 8×H200, approximately 900 GB/s GPU interconnect bandwidth, and a dedicated 400 Gbps InfiniBand interface per GPU. | Representative hot LRS storage about $0.0184/GiB-month; internet egress can be around $0.087/GB, varying by geography and tier.                                               | Technically strong but high-priced. As with AWS/GCP, a managed application may be permitted while raw-service resale is distinct and contract-dependent. ([Microsoft Learn][11])                                                                                                                                                                           |
+| **Lambda**    | One-minute billing. 8×B200 self-service is advertised as first-come and launchable in minutes. One-click cluster reservations start at 16 GPUs and two weeks.                                                                        | 8×B200 node with 22 TiB local SSD; exact cluster network details must be confirmed in the order.                                     | No ingress or egress charge; filesystem price is exposed through the console rather than the public compute table.                                                            | Good B200 pilot candidate, but public first-come availability is not an SLA. Obtain explicit hosted-inference rights. ([Lambda][10])                                                                                                                                                                                                                       |
+| **Together**  | OD plus reservations from seven through 180 days. Dedicated clusters are marketed as becoming ready in minutes.                                                                                                                      | 8-GPU nodes with in-node NVLink/NVSwitch and Quantum-2 InfiniBand for larger clusters.                                               | Storage **$0.16/GiB-month**; public materials describe free ingress and egress for the cluster product.                                                                       | The longest public H200 reservation is price-competitive. It creates utilization risk for a pre-product company. Public token API pricing is a competitor benchmark, not authority to resell the retail API. ([Together AI][1])                                                                                                                            |
+| **OCI**       | Public OD price; actual quota and startup were not tested.                                                                                                                                                                           | Exact 8×H200 node with eight 400 Gbps RDMA interfaces.                                                                               | Region-dependent block/object storage and egress.                                                                                                                             | Technically valid, economically weak at public price. Commercial rights require the applicable Oracle agreement. ([Oracle][12])                                                                                                                                                                                                                            |
+
+A provider’s infrastructure startup claim does **not** equal GLM‑5.2 model-ready time. Model-ready time additionally includes allocating the exact node, pulling approximately 0.8 TiB of artifacts, loading weights, initializing tensor parallelism, compiling or capturing graphs, warming kernels, and populating prefix caches.
+
+### 3.3 Conditional, incomplete, or excluded suppliers
+
+| Supplier         |                                                                                                                                                                               Advertised economics | Why it is not accepted as primary production evidence                                                                                                                                                                                                                           |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **RunPod**       | H200 Pods about **$35.12 per 8-GPU-hour equivalent**; B200 about **$47.12**. H200 clusters approximately $34.48 equivalent. Serverless compute approximately $47.44 H200 / $69.12 B200 equivalent. | Public per-GPU prices do not prove that eight selected GPUs form one contiguous 8×SXM NVSwitch node. Use for experiments only until topology, live stock, and hosted-inference terms are verified. Per-second billing and 3/6-month savings plans are available. ([Runpod][14]) |
+| **Vast.ai**      |                                                                                                     Dynamic marketplace pricing can be low; interruptible offers are often substantially below OD. | Heterogeneous host topology and current exact 8×H200 stock were not established. More importantly, the public terms prohibit competing or service-bureau use. Exclude from Arcten Inference absent a written amendment. ([Vast AI][15])                                         |
+| **Voltage Park** |                                                                     Public self-service pricing currently centers on H100, starting around $1.99/GPU-hour; B200/B300 arrangements are quote-based. | Not a matched public H200/B200 GLM‑5.2 shortlist. Its H100 pricing cannot be substituted into this comparison. ([Voltage Park][16])                                                                                                                                             |
+| **Hyperstack**   |                                                             H200 approximately **$31.92/node-hour OD** or **$22.32 reserved equivalent**; B200 approximately $48 OD or $40.80 reserved equivalent. | Promising quote/RFP candidate, but one contiguous 8-GPU NVSwitch topology, actual stock, and precise commitment conditions were not sufficiently established by the public rate alone. ([Hyperstack][17])                                                                       |
+| **GMI Cloud**    |                                                                                                                  H200 “from” approximately **$20.80/node-hour equivalent**; B200 “from” about $32. | The H200 offer is described as limited and B200 is effectively quote-based. Billing, topology, availability, and egress need direct contractual evidence. ([GMI Cloud][18])                                                                                                     |
+
+### 3.4 Serverless market reference
+
+| Product                       |                                                       Public rate | Procurement interpretation                                                                                                         |
+| ----------------------------- | ----------------------------------------------------------------: | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Together GLM‑5.2              |      $1.40 input / $0.26 cached / $4.40 output per million tokens | Exactly matches Arcten’s proposed Now price. Exact artifact and serving equivalence are not publicly proven. ([Together AI][1])    |
+| Crusoe GLM‑5.2                |                         $1.40 input / $0.26 cached / $4.40 output | Same conclusion. It is a retail competitor price, not evidence that a smaller operator can earn margin at that rate. ([Crusoe][7]) |
+| Verda H200 serverless compute |                 $35.20/node-hour standard; $12.32 spot equivalent | Compute-hour billing still leaves model throughput, cold loading, and queue utilization with Arcten. ([Verda][3])                  |
+| RunPod serverless compute     | Approximately $47.44 H200 / $69.12 B200 per 8-GPU-hour equivalent | Node-equivalent only; contiguous topology and exact-model startup behavior require testing. ([Runpod][14])                         |
+
+---
+
+## 4. Reproducible calculations
+
+### 4.1 Cost model
+
+For each node:
+
+[
+E =
+\frac{
+(r_{\text{GPU}} + r_{\text{CPU/RAM}} + r_{\text{storage}} +
+r_{\text{network}} + r_{\text{orchestration}} +
+r_{\text{provider/payment}})
+\times f_{\text{retry}}
+}{
+u_{\text{productive}}
+}
+]
+
+Where:
+
+* (E) is dollars per productive node-hour.
+* (u_{\text{productive}}) is token-processing time divided by billed GPU time. It therefore captures model loading, compilation, idle time, warm tails, and queue gaps.
+* (f_{\text{retry}}) captures interruption, failure, duplicate work, and replay.
+* Credits are zero.
+
+Then:
+
+[
+\text{Input COGS/M} =
+\frac{E \times 10^6}{T_{\text{prefill}}\times 3600}
+]
+
+[
+\text{Output COGS/M} =
+\frac{E \times 10^6}{T_{\text{decode}}\times 3600}
+]
+
+[
+\text{Cached-input COGS/M} =
+b_{\text{rebuild}}\times \text{Input COGS/M} +
+c_{\text{KV retention, lookup, replication}}
+]
+
+There is no defensible fixed cached-input saving without measuring cache reuse, eviction, HBM occupation, rebuilds following interruption, and cross-replica duplication.
+
+### 4.2 Planning scenarios
+
+These are explicit planning assumptions, not measured GLM‑5.2 results.
+
+| Scenario                 |               GPU basis | Productive utilization | Ancillary cost as % of GPU | Retry/failure factor | Effective $/productive node-hour |
+| ------------------------ | ----------------------: | ---------------------: | -------------------------: | -------------------: | -------------------------------: |
+| Low-load warm Now        |  Crusoe H200 OD, $34.32 |                    15% |                        12% |                1.02× |                      **$261.38** |
+| Bursty Now               |          Crusoe H200 OD |                    60% |                        10% |                1.05× |                       **$66.07** |
+| Sustained Now            |          Crusoe H200 OD |                    85% |                         8% |                1.03× |                       **$44.91** |
+| Flex, Verda spot         | Verda H200 spot, $11.20 |                    75% |                        15% |                1.25× |                       **$21.47** |
+| Flex, Nebius preemptible |     Nebius H200, $19.60 |                    75% |                        12% |                1.15× |                       **$33.66** |
+
+### 4.3 Cost per million tokens at representative throughput
+
+Assumptions:
+
+* Aggregate prefill throughput: **50,000 input tokens/s**.
+* Aggregate decode throughput: **2,000 output tokens/s**.
+* Favorable cached case: rebuild allocation equal to 5% of uncached prefill work plus $0.02/M cache carrying cost.
+* Stress cached case: 20% rebuild allocation plus $0.05/M carrying cost.
+
+| Scenario                 | Input COGS/M | Cached COGS/M favorable | Cached COGS/M stress | Output COGS/M |
+| ------------------------ | -----------: | ----------------------: | -------------------: | ------------: |
+| Low-load warm Now        |   **$1.452** |                  $0.093 |           **$0.340** |    **$36.30** |
+| Bursty Now               |       $0.367 |                  $0.038 |               $0.123 |     **$9.18** |
+| Sustained Now            |       $0.250 |                  $0.032 |               $0.100 |     **$6.24** |
+| Flex, Verda spot         |       $0.119 |                  $0.026 |               $0.074 |     **$2.98** |
+| Flex, Nebius preemptible |       $0.187 |                  $0.029 |               $0.087 |     **$4.68** |
+
+At 2,000 aggregate output tokens/s, **none of these scenarios reaches the proposed $1.80/M Flex output price**, and the sustained OD case does not reach the $4.40/M Now price. The proposal depends on materially higher aggregate decode throughput.
+
+### 4.4 Throughput sensitivity
+
+#### Input COGS per million
+
+| Scenario                 | 25k prefill t/s | 50k prefill t/s | 100k prefill t/s |
+| ------------------------ | --------------: | --------------: | ---------------: |
+| Low-load warm Now        |          $2.904 |          $1.452 |           $0.726 |
+| Bursty Now               |          $0.734 |          $0.367 |           $0.184 |
+| Sustained Now            |          $0.499 |          $0.250 |           $0.125 |
+| Flex, Verda spot         |          $0.239 |          $0.119 |           $0.060 |
+| Flex, Nebius preemptible |          $0.374 |          $0.187 |           $0.094 |
+
+#### Output COGS per million
+
+| Scenario                 | 500 decode t/s | 1,000 decode t/s | 2,000 decode t/s | 4,000 decode t/s |
+| ------------------------ | -------------: | ---------------: | ---------------: | ---------------: |
+| Low-load warm Now        |        $145.21 |           $72.61 |           $36.30 |           $18.15 |
+| Bursty Now               |         $36.70 |           $18.35 |            $9.18 |            $4.59 |
+| Sustained Now            |         $24.95 |           $12.48 |            $6.24 |        **$3.12** |
+| Flex, Verda spot         |         $11.93 |            $5.96 |            $2.98 |        **$1.49** |
+| Flex, Nebius preemptible |         $18.70 |            $9.35 |            $4.68 |            $2.34 |
+
+### 4.5 Minimum aggregate decode throughput at perfect utilization
+
+This table includes GPU price only. Real production requirements are higher.
+
+| Capacity                        | Now $4.40 | Priority $3.00 | Standard $2.50 | Flex $1.80 |
+| ------------------------------- | --------: | -------------: | -------------: | ---------: |
+| Verda H200 spot, $11.20         |   707 t/s |          1,037 |          1,244 |      1,728 |
+| Nebius H200 preemptible, $19.60 |     1,237 |          1,815 |          2,178 |      3,025 |
+| Crusoe H200 OD, $34.32          |     2,167 |          3,178 |          3,813 |      5,296 |
+| AWS H200 Capacity Block, $47.76 |     3,015 |          4,422 |          5,307 |      7,370 |
+| Verda B200 spot, $17.12         |     1,081 |          1,585 |          1,902 |      2,642 |
+| Verda B200 OD, $48.88           |     3,086 |          4,526 |          5,431 |      7,543 |
+| Lambda B200 OD, $53.52          |     3,379 |          4,956 |          5,947 |      8,259 |
+| Nebius B200 OD, $57.20          |     3,611 |          5,296 |          6,356 |      8,827 |
+
+B200 may deliver higher throughput than H200, but that must be measured on the exact GLM‑5.2 configuration. The table does not assume a performance multiplier.
+
+### 4.6 Realistic price gates
+
+| Service case             | Effective node-hour | Retail output price | Break-even decode throughput | Throughput for 25% gross margin |
+| ------------------------ | ------------------: | ------------------: | ---------------------------: | ------------------------------: |
+| Low-load Now             |             $261.38 |             $4.40/M |                   16,501 t/s |                      22,002 t/s |
+| Bursty Now               |              $66.07 |             $4.40/M |                    4,171 t/s |                       5,561 t/s |
+| Sustained Now            |              $44.91 |             $4.40/M |                **2,835 t/s** |                   **3,780 t/s** |
+| Flex, Verda spot         |              $21.47 |             $1.80/M |                **3,313 t/s** |                   **4,418 t/s** |
+| Flex, Nebius preemptible |              $33.66 |             $1.80/M |                **5,194 t/s** |                   **6,926 t/s** |
+
+Corresponding sustained-H200 prefill break-even requirements are approximately:
+
+* Now at $1.40/M: **8,912 input tokens/s**
+* Priority at $0.70/M: **17,823**
+* Standard at $0.50/M: **24,953**
+* Flex at $0.40/M: **31,191**
+
+For the Verda Flex scenario, the $0.40 input target requires approximately **14,907 aggregate prefill tokens/s**.
+
+### 4.7 Weight storage and movement
+
+A planning size of **0.8 TiB per model copy** allows for the approximately 753B FP8 checkpoint plus scales, metadata, tokenizer files, and serving artifacts. This is an estimate, not an official packaged-size figure.
+
+| Provider/storage product           | Approximate monthly cost for 0.8 TiB |
+| ---------------------------------- | -----------------------------------: |
+| Nebius object storage              |                                  $12 |
+| Azure hot LRS                      |                                  $15 |
+| GCP regional standard              |                                  $16 |
+| AWS S3 Standard                    |                                  $19 |
+| CoreWeave or Crusoe object storage |                                  $49 |
+| RunPod network storage             |                                  $57 |
+| Together storage                   |                                 $131 |
+| Verda container registry           |                                 $164 |
+
+Representative one-time hyperscaler internet egress for 0.8 TiB is approximately **$70–$100**, depending on provider, region, and tier. Storage is therefore secondary to warm GPU time: one $34.32 H200 node costs approximately $25,000 for a 730-hour month. Public storage and egress rates vary by region and product. ([Amazon Web Services, Inc.][19])
+
+---
+
+## 5. Procurement optimization assessment
+
+| Optimization                            | Quality category                                                                                              | Baseline and effect                                                         | Latency/reliability effect                                                                                     | Expected saving                                              | Engineering difficulty and maturity                                                          | Interaction and disconfirming evidence                                                                                               |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Move exact H200 OD from Crusoe to Verda | Same pinned artifacts; mathematically intended equivalent, not bitwise guaranteed                             | $34.32 → $32/node-hour. Exact-model throughput must be benchmarked on both. | No inherent queue benefit. Model loading and provider stock may differ.                                        | **6.8% raw GPU saving**; lower after multi-provider overhead | Medium; ordinary cloud portability is mature                                                 | Disconfirmed if Verda’s terms do not permit the product, stock is unreliable, or throughput/tails are worse.                         |
+| Move H200 work from OD to Verda spot    | Same artifacts; completed outputs should be distribution-preserving, but retries can change stochastic output | $34.32 → $11.20/node-hour. No public exact-model throughput evidence.       | TTFT and ITL can be similar while running; total-completion and tail risk increase sharply during reclamation. | **67.4% raw**; estimated **16–73% effective**, central 52%   | High for customer-facing service; mature for batch, less mature for short completion windows | Interruptions destroy caches, fragment batches, create duplicate work, and increase model-reload time. Experiment 2 reproduces this. |
+| Together 91–180-day H200 reservation    | Same exact deployment if artifacts are pinned                                                                 | $47.92 OD → $31.92 reserved                                                 | Better capacity stability; creates demand and utilization risk                                                 | **33.4% raw versus Together OD**                             | Low operational difficulty; high commercial commitment risk                                  | Disconfirmed if measured base utilization is too low or another provider offers a better negotiated contract.                        |
+| Multi-provider routing                  | Same artifacts required; cross-hardware execution is not bitwise identical                                    | No fixed throughput or price benefit                                        | Can improve failure recovery; can worsen TTFT and tails through cold starts                                    | No defensible fixed saving                                   | High; individual cloud adapters are mature, fleet economics are workload-specific            | Fragments queues and prefix caches. Disconfirmed if duplicate warm capacity costs more than spot arbitrage saves.                    |
+
+### Multi-provider break-even example
+
+Suppose Arcten keeps a separate Crusoe H200 backup warm at **$34.32/hour** and shifts flexible demand from Verda OD at $32/hour to Verda spot at $11.20/hour.
+
+[
+\text{Savings per shifted node-hour} = 32 - 11.20 = 20.80
+]
+
+[
+\text{Break-even shifted load} =
+\frac{34.32}{20.80} = 1.65
+]
+
+Arcten must average more than **1.65 spot nodes of shifted work for every continuously warm backup node** before the raw arbitrage funds that backup. Queue fragmentation, cache loss, and orchestration raise the threshold. At pre-product load, active-active warm duplication is unlikely to beat one primary provider.
+
+---
+
+## 6. What is already commodity
+
+* Continuous batching, paged KV allocation, prefix caching, FlashAttention/FlashInfer-class kernels, CUDA graphs, tensor parallelism, and common vLLM/SGLang deployment.
+* Kubernetes or Slurm fleet provisioning, health checks, retries, and ordinary autoscaling.
+* S3-compatible model mirroring and immutable container images.
+* Basic spot interruption handling and provider-price comparison.
+* Metrics for TTFT, inter-token latency, token throughput, GPU utilization, and memory.
+* Routing based on static model name, provider availability, or list price.
+
+A product whose principal advantage is merely “we use SGLang, batching, and cheaper spot GPUs” is not defensible.
+
+## 7. What could become proprietary
+
+1. **Completion-window-aware admission control.** Predict whether a request can be delayed and consolidated without missing its promised completion distribution.
+
+2. **Marginal prefill/decode COGS scheduling.** Route based on current batch composition, prefix reuse, expected output length, HBM occupancy, decode saturation, and interruption hazard—not average node price.
+
+3. **Empirical capacity-risk models.** Maintain provider/SKU/region-specific distributions for acquisition time, reclamation risk, failure rate, model-ready time, and recovery cost.
+
+4. **Cache-aware multi-provider placement.** Keep compatible prefixes together and account for the cost of moving or rebuilding caches before chasing a cheaper GPU.
+
+5. **Exact-artifact attestation.** Record checkpoint SHA, tokenizer SHA, container digest, CUDA/NCCL/engine versions, KV dtype, context cap, kernel choices, and generation parameters for every deployment.
+
+6. **Workload-specific prefill/decode separation.** Potentially place prefill and decode on different capacity pools—but only if measured transfer and coordination costs produce a real net saving.
+
+---
+
+## 8. Three experiments Arcten can run within two weeks
+
+### Experiment 1 — Exact-model performance and quality qualification
+
+**Providers:** Verda, Crusoe, and Nebius 8×H200. Add Verda or Lambda 8×B200 for the full-context configuration.
+
+**Pinned configuration**
+
+* Exact `zai-org/GLM-5.2-FP8` revision and shard checksums.
+* Exact tokenizer and chat-template hashes.
+* One immutable container digest.
+* Fixed CUDA, NCCL, driver, vLLM/SGLang, FlashInfer, and kernel versions.
+* Explicit KV dtype.
+* Identical context cap and generation parameters.
+
+**Workload matrix**
+
+* Input lengths: 1k, 8k, 32k, 128k; add 1M-class test only on the B200 full-context service.
+* Output lengths: 256, 2k, and 8k.
+* Arrival patterns: low-load Poisson, sharp burst, sustained saturation, and mixed-length production trace.
+* Cold, warm-model, cold-prefix, and warm-prefix states.
+
+**Record**
+
+* TTFT, inter-token latency, total completion time, and p50/p95/p99.
+* Aggregate prefill and decode tokens/s.
+* GPU utilization, HBM use, power where exposed, queue depth, and batch composition.
+* Model download, load, graph-capture, and ready time.
+* Failed requests, NCCL errors, and restart time.
+* Effective COGS per million input, cached, and output tokens.
+
+**Quality tests**
+
+* Greedy exact-output comparison.
+* Per-token logit/top-k divergence on a fixed corpus.
+* Repeated stochastic generations and distributional comparison.
+* Long-context retrieval and generation evaluations.
+* Separate report for FP8 versus BF16 KV if both are tested.
+
+**Pass gate:** the measured p95 workload mix must achieve no more than 75% of the proposed retail price in complete COGS, including warm tail and failures. For the modeled sustained Now case, output throughput should be at least approximately **3,800 aggregate tokens/s**.
+
+### Experiment 2 — Spot interruption and recovery economics
+
+**Providers:** Verda spot, Nebius preemptible, and CoreWeave spot.
+
+Run both natural and injected node failures while serving queued Flex traffic.
+
+Measure:
+
+* Actual notice duration.
+* Completed work lost at interruption.
+* Duplicate token computation.
+* Model and prefix-cache reload time.
+* Cache-hit-rate degradation after replacement.
+* Retry count and additional GPU-hours.
+* Allocation success and replacement-node acquisition time.
+* Completion-window miss distribution.
+* Difference between checkpoint/restart, whole-request replay, and speculative duplicate execution.
+
+Produce an empirical:
+
+[
+f_{\text{retry}} =
+\frac{\text{total GPU work including retries}}
+{\text{useful completed GPU work}}
+]
+
+**Pass gate:** measured effective Flex COGS must support $1.80/M output with the desired margin. Under the planning scenario, this means approximately **4,400 aggregate output tokens/s** on Verda spot for 25% gross margin. Spot should not be used for a strict one-minute promise unless the request is already running on secured capacity.
+
+### Experiment 3 — Live capacity and contracting probe
+
+For seven days:
+
+* Poll exact H200/B200 SKU inventory at five-minute intervals where APIs permit.
+* Perform a controlled number of real launches across target regions and times of day.
+* Record allocation success, allocation latency, VM-ready time, model-ready time, and unexplained failures.
+* Inspect whether eight GPUs are one contiguous NVSwitch/SXM node.
+* Query AWS Capacity Block and GCP Calendar inventory for representative future windows.
+* Obtain written quotations for 30-, 90-, and 180-day capacity.
+* Obtain written confirmation that Arcten may operate a commercial hosted-inference API on the rented infrastructure.
+* Obtain explicit language covering customer data, subprocessors, model artifacts, indemnity, termination, preemption, credits, and data deletion.
+
+**Pass gate:** Now capacity must be warm or contractually acquired; public OD catalog availability is not an acceptable Now capacity guarantee.
+
+---
+
+## 9. Three-month engineering recommendation
+
+### Month 1 — Establish ground truth
+
+* Complete the three experiments.
+* Build immutable artifact manifests and automatic deployment verification.
+* Separate an **H200 capped-context SKU** from a **B200 full-context SKU**.
+* Mirror weights in at least two providers, but do not keep two complete fleets warm.
+* Model prefill, decode, cached-input, warm-tail, and retry COGS separately.
+* Do not publish binding prices or per-request timing guarantees.
+
+### Month 2 — Private beta
+
+* Select one H200 primary based on measured economics and contract terms, not catalog price alone.
+* Likely finalists: Crusoe, Nebius, or Verda after legal clearance.
+* Use Verda or Nebius interruptible capacity only for Flex overflow.
+* Implement queue-aware admission control and reject or defer requests when the promised window cannot be met.
+* Expose the exact model revision, context cap, KV precision, and serving configuration.
+* Launch B200 full-context support only as a distinct SKU with distinct pricing.
+
+### Month 3 — Limited multi-provider production
+
+* Operate one primary provider and one overflow provider.
+* Configure a third provider as cold or scheduled break-glass capacity.
+* Add provider-specific acquisition and interruption models.
+* Route using marginal COGS, queue state, cache locality, and deadline risk.
+* Commit for 90–180 days only after measured base demand can keep the committed node pool above roughly 70% productive utilization.
+* Do not sign a one-year GPU commitment during the pre-product period.
+
+### Commercial gates before binding the proposed prices
+
+1. Complete COGS at the p95 workload mix is at most 75% of retail revenue.
+2. Sustained Now output throughput reaches approximately 3,800 aggregate tokens/s per modeled H200 node, or the price is raised.
+3. Flex output reaches approximately 4,400 tokens/s under measured Verda-like spot economics, or the $1.80 price is raised.
+4. Actual interruption and recovery data support the advertised completion distribution.
+5. Every provider contract explicitly permits commercial hosted inference.
+6. Checkpoint, tokenizer, context, weight precision, KV precision, and serving configuration are disclosed and verified.
+7. Low-load COGS is covered by minimum spend, queueing, higher Now prices, or another demand-shaping mechanism.
+
+---
+
+## 10. Explicit reasons the approach might fail
+
+1. **Decode throughput may be too low.** At 2,000 aggregate output tokens/s, modeled sustained Now COGS is about $6.24/M, above the proposed $4.40 price.
+
+2. **Low demand destroys the economics.** One warm H200 node at 15% productive utilization produces modeled output COGS of more than $36/M even at 2,000 decode tokens/s.
+
+3. **Spot savings may disappear after interruption.** Repeated model loading, retrying long outputs, losing prefix caches, and waiting for replacement capacity can consume most of the catalog discount.
+
+4. **Compatible requests may not arrive together.** Differences in model revision, adapter, context length, decoding parameters, latency tolerance, and prefix content reduce the batching pool.
+
+5. **Long completion windows do not guarantee high utilization.** A request can wait five minutes without enough compatible work arriving to form an economically superior batch.
+
+6. **Full-context traffic can create adverse selection.** Customers most attracted to inexpensive 1M-context service may generate the largest KV-memory and prefill burden while paying the lowest delayed-input price.
+
+7. **The cheapest catalog capacity may not be allocatable.** Marketplace listings and per-GPU “from” prices do not prove one contiguous 8-GPU NVSwitch node is available.
+
+8. **Commercial terms may block the fleet design.** Vast publicly prohibits service-bureau use; Verda’s public restrictions require clarification; other providers may require an OEM or managed-service agreement.
+
+9. **Multi-provider operation can reduce, rather than improve, utilization.** Splitting queues, replicas, and prefixes across providers can lower batch density and cache hit rates.
+
+10. **Hardware and kernel differences prevent bitwise identity.** Even with identical weights and tokenizer, H200/B200, CUDA versions, reductions, and batching can change floating-point results.
+
+11. **The proposed Now price is not differentiated.** Together and Crusoe already publicly list the same GLM‑5.2 token price, potentially with greater fleet scale and purchasing leverage. ([Together AI][1])
+
+12. **Serverless cold-start behavior may be incompatible with short windows.** Provider infrastructure launch time excludes loading and initializing the roughly 0.8 TiB GLM‑5.2 artifact.
+
+13. **Output-heavy workloads can erase input-side savings.** Prefill targets appear materially easier than decode targets; a customer mix with long generations can make the blended price unprofitable.
+
+14. **Commitment can become stranded capacity.** The best public reserved H200 rate requires a 91–180-day commitment before Arcten has validated stable base demand.
+
+**Recommendation:** proceed with experiments, not customer commitments. Build the first private beta around a capped-context H200 service, use spot only for Flex, and treat full-1M B200 service as a separately priced product.
+
+[1]: https://www.together.ai/pricing "https://www.together.ai/pricing"
+[2]: https://huggingface.co/zai-org/GLM-5.2-FP8 "https://huggingface.co/zai-org/GLM-5.2-FP8"
+[3]: https://datacrunch.io/h200-sxm5 "https://datacrunch.io/h200-sxm5"
+[4]: https://recipes.vllm.ai/zai-org/GLM-5.2 "https://recipes.vllm.ai/zai-org/GLM-5.2"
+[5]: https://docs.nebius.com/compute/resources/pricing "https://docs.nebius.com/compute/resources/pricing"
+[6]: https://www.coreweave.com/pricing "https://www.coreweave.com/pricing"
+[7]: https://www.crusoe.ai/cloud/pricing "https://www.crusoe.ai/cloud/pricing"
+[8]: https://cloud.google.com/products/dws/pricing "https://cloud.google.com/products/dws/pricing"
+[9]: https://aws.amazon.com/ec2/capacityblocks/pricing/ "https://aws.amazon.com/ec2/capacityblocks/pricing/"
+[10]: https://lambda.ai/pricing "https://lambda.ai/pricing"
+[11]: https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/gpu-accelerated/nd-h200-v5-series "https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/gpu-accelerated/nd-h200-v5-series"
+[12]: https://www.oracle.com/cloud/price-list/ "https://www.oracle.com/cloud/price-list/"
+[13]: https://docs.verda.com/cpu-and-gpu-instances/set-up-a-gpu-instance/ "https://docs.verda.com/cpu-and-gpu-instances/set-up-a-gpu-instance/"
+[14]: https://www.runpod.io/pricing "https://www.runpod.io/pricing"
+[15]: https://vast.ai/pricing?srsltid=AfmBOopdGwnX8xjDosBGa_l7a84RyhRYlzMiY5c4tkqsn5V_n0nwfk32 "https://vast.ai/pricing?srsltid=AfmBOopdGwnX8xjDosBGa_l7a84RyhRYlzMiY5c4tkqsn5V_n0nwfk32"
+[16]: https://www.voltagepark.com/ "https://www.voltagepark.com/"
+[17]: https://www.hyperstack.cloud/gpu-pricing "https://www.hyperstack.cloud/gpu-pricing"
+[18]: https://www.gmicloud.ai/en/pricing "https://www.gmicloud.ai/en/pricing"
+[19]: https://aws.amazon.com/s3/pricing/ "https://aws.amazon.com/s3/pricing/"

@@ -1,9 +1,13 @@
 @import 'tailwindcss';
 
 :root {
-	--background: #f5f5f4;
-	--foreground: #1c1917;
-	--muted: #57534e;
+	--background: #f9fbff;
+	--foreground: #020817;
+	--muted: #39455a;
+	--brand: #2e4d8c;
+	--brand-strong: #243f78;
+	--accent-blue: #6270df;
+	--rail-dot: #b7c8df;
 	--accent-rose: rgb(254 205 211);
 	--accent-cyan: rgb(165 243 252);
 	--accent-indigo: rgb(199 210 254);
@@ -22,30 +26,43 @@
 
 @media (prefers-color-scheme: dark) {
 	:root:not(.light) {
-		--background: #1c1917;
-		--foreground: #e7e5e4;
-		--muted: #a8a29e;
+		--background: #07101f;
+		--foreground: #eff4ff;
+		--muted: #b3bfd3;
+		--brand: #5f7fc4;
+		--brand-strong: #7898de;
+		--accent-blue: #91a0ff;
+		--rail-dot: #506581;
 		--inline-code-color: color-mix(in srgb, var(--foreground) 82%, var(--background));
 	}
 }
 
 :root.dark {
-	--background: #1c1917;
-	--foreground: #e7e5e4;
-	--muted: #a8a29e;
+	--background: #07101f;
+	--foreground: #eff4ff;
+	--muted: #b3bfd3;
+	--brand: #5f7fc4;
+	--brand-strong: #7898de;
+	--accent-blue: #91a0ff;
+	--rail-dot: #506581;
 	--inline-code-color: color-mix(in srgb, var(--foreground) 82%, var(--background));
 }
 
 :root.light {
-	--background: #f5f5f4;
-	--foreground: #1c1917;
-	--muted: #57534e;
+	--background: #f9fbff;
+	--foreground: #020817;
+	--muted: #39455a;
+	--brand: #2e4d8c;
+	--brand-strong: #243f78;
+	--accent-blue: #6270df;
+	--rail-dot: #b7c8df;
 	--inline-code-color: color-mix(in srgb, var(--foreground) 78%, var(--background));
 }
 
 html {
 	min-height: 100%;
 	background-color: var(--background);
+	scroll-behavior: smooth;
 	transition: background-color 0.3s ease;
 }
 

@@ -1,0 +1,491 @@
+# GLM-5.2 FP8 inference economics
+
+**Assessment date: August 1, 2026**
+
+## 1. Executive conclusion
+
+**Do not make the four proposed prices binding yet.**
+
+The economic thesis is conditionally valid: waiting reduces cost only when the delay permits Arcten to use cheaper capacity, raise productive utilization, improve cache locality, or schedule around bursts. A longer completion window does not itself reduce GPU work.
+
+The proposed **Now** price exactly matches Z.ai’s retail GLM-5.2 price. Consequently, retail API resale at that price has no gross margin before payment, support, and retry costs. Fireworks also lists GLM-5.2 at the same uncached-input and output prices, while its batch service gives a 50% discount at much longer completion windows. These provider listings do not establish that they expose the exact FP8 checkpoint, revision, tokenizer, context limit, or KV precision required by Arcten. ([Overview - Z.AI DEVELOPER DOCUMENT][1])
+
+### Tier verdict
+
+The thresholds below use one CoreWeave 8×B200 node at $68.80/hour, 85% productive utilization, and a 10% retry/failure reserve. “Prefill” and “decode” are separate phase goodputs, not simultaneous headline throughput. The 30% column also deducts a 2.9% variable payment fee but still excludes fixed payment fees, control-plane costs, support, and cold starts. CoreWeave’s node includes 1,440 GB aggregate HBM, 128 vCPUs, 2,048 GB RAM, and 61.44 TB local storage. ([CoreWeave][2])
+
+| Tier                | Zero-margin minimum prefill / decode | Minimum for 30% margin | Conclusion                                                                                                        |
+| ------------------- | -----------------------------------: | ---------------------: | ----------------------------------------------------------------------------------------------------------------- |
+| **Now**             |                  17.7k / 5.62k tok/s |    26.3k / 8.38k tok/s | Technically plausible at sustained utilization. No price differentiation from Z.ai retail.                        |
+| **Priority**        |                        35.3k / 8.24k |          52.7k / 12.3k | Plausible only with strong exact-FP8 performance or discounted compute. Proposed margin is thin.                  |
+| **Standard**        |                        49.5k / 9.89k |          73.7k / 14.7k | Not currently supported by public exact-FP8 evidence. Approximately break-even in the planning model.             |
+| **Flex, on-demand** |                        61.8k / 13.7k |          92.1k / 20.5k | Not sustainable at list-price on-demand compute.                                                                  |
+| **Flex, spot**      |                        37.9k / 8.42k |          56.5k / 12.6k | Potentially viable, but only with high utilization, low interruption waste, and probabilistic completion targets. |
+
+No public benchmark demonstrates those rates for the exact `GLM-5.2-FP8` checkpoint. The strongest production result is for **GLM-5.2-NVFP4**, which is a lossy, different-precision model and cannot validate FP8 COGS. The public vLLM GLM-5.2 optimization tracker also shows that important block-FP8 decode, FP8 KV, communication, and Blackwell optimizations are still active work. ([vLLM][3])
+
+**Recommended decision:** validate **Now plus one experimental queued tier**, probably Priority. Do not publish Standard or Flex at the proposed prices until exact-FP8 measurements clear the 30%-margin thresholds under representative traffic and failure conditions.
+
+---
+
+## 2. Exact serving contract
+
+The current `zai-org/GLM-5.2-FP8` repository is approximately 756 GB across 141 weight shards. The current revision should be pinned to the full commit `ba978f7d347eaf65d22f1a86833408afdb953541`, rather than tracking `main`. The model has a 1,048,576-token configured context window, 78 layers, 256 routed experts, eight selected experts per token, `kv_lora_rank=512`, and an FP8 E4M3 block quantization configuration. ([Hugging Face][4])
+
+It should not be described as a graph that is entirely FP8. The checkpoint uses block-FP8 quantized modules while retaining a BF16 base dtype and explicit modules that are not converted. The contract must identify both the checkpoint format and those higher-precision components. ([Hugging Face][5])
+
+The official vLLM recipe states that the checkpoint can run on 8×H200 or 8×H20, while the full 1M-token context requires 8×B200. Its reference FP8 launch uses tensor parallelism of eight, FP8 KV cache, and five-token MTP speculation. ([vLLM Recipes][6])
+
+### Required identity manifest
+
+Every Arcten deployment should record:
+
+* Full model repository revision and SHA-256 of all 141 weight shards.
+* Hashes for `config.json`, tokenizer files, special-token files, generation configuration, and chat template.
+* Maximum context: exactly 1,048,576 tokens unless the customer requests a smaller operational limit.
+* Weight quantization: native E4M3 block-FP8 checkpoint, including module exclusions.
+* KV-cache precision: explicitly FP8 E4M3 or another declared value; it is not implied by weight precision.
+* Exact vLLM/SGLang commit, container digest, Transformers version, CUDA, driver, NCCL, FlashInfer/FlashAttention, and kernel configuration.
+* Sampling parameters, seed, logit processors, structured-output implementation, and tool/reasoning parsers.
+
+### Quality categories
+
+| Category                      | Meaning for Arcten                                                                                                                                                                                                      |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Bitwise identity**          | Same model and runtime manifest, deterministic kernels, fixed batch shape/order, fixed hardware, and fixed seed produce identical token IDs or logits. Dynamic production batching will usually prevent this guarantee. |
+| **Mathematical equivalence**  | Paged KV, continuous batching, exact prefix-cache reuse, CUDA graphs, kernel fusion, TP/EP, and P/D disaggregation compute the same mathematical operation, subject to floating-point reordering.                       |
+| **Distribution preservation** | Speculative decoding or MTP preserves the target sampling distribution only when draft verification and acceptance/rejection are correct for the configured sampler. This must be tested, not assumed.                  |
+| **Lossy approximation**       | NVFP4, MXFP4, INT4, approximate KV compression, changed sparse-attention/index-sharing patterns, or model substitution. These must not be sold as equivalent to the requested FP8 model.                                |
+
+---
+
+## 3. Evidence table
+
+“NR” means the source did not report the requested metric. None of the public studies provides a statistical confidence interval; reported gains are point estimates.
+
+| Evidence                                          | Quality and applicability                                                                                                                                      | Baseline → optimized result                                                                                                                                                                                                                                      | Latency, memory, utilization                                                                                                                                                                        | Maturity, interactions, reproduction, and disconfirming evidence                                                                                                                                                                                                                                                      |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **IndexShare built into GLM-5.2**                 | Part of the requested model architecture; not an optional Arcten optimization. Mathematically part of the exact checkpoint.                                    | Official material states approximately 2.9× lower per-token indexer FLOPs at 1M context. End-to-end throughput: NR.                                                                                                                                              | TTFT, ITL, E2E, tails, HBM, utilization: NR.                                                                                                                                                        | High confidence that the architecture exists; low confidence in COGS impact without an exact-FP8 benchmark. Changing its layer pattern would change model semantics. ([Hugging Face][7])                                                                                                                              |
+| **IndexCache paper**                              | Tested primarily on a 30B DSA model, with preliminary GLM-5 results. Lossy/approximate because the paper reports “negligible” rather than zero quality change. | Removes 75% of indexer work; up to 1.82× prefill and 1.48× decode on the 30B model; approximately 1.2× GLM-5 E2E.                                                                                                                                                | TTFT, ITL, tail latency, HBM and utilization: NR.                                                                                                                                                   | Research-stage. Interacts strongly with sparse attention and MTP. GLM-5.2 already embeds IndexShare, so these gains cannot be added again. Reproduce from the paper’s layer-selection method and calibration set. ([arXiv][8])                                                                                        |
+| **MTP/IndexerCache correctness fix on exact FP8** | Exact `GLM-5.2-FP8`, TP=8. Distribution-preserving only if target verification is correct.                                                                     | Mean accepted length rose from about 3 to about 4 at about 60% acceptance; IFBench remained 74.62. Throughput gain: NR.                                                                                                                                          | TTFT, TPOT, ITL, E2E, tails, memory and utilization: NR.                                                                                                                                            | Upstream implementation work, included in recent vLLM releases. Interacts with P/D, high concurrency, index sharing, and scheduler behavior. No public evidence that it crosses Arcten’s break-even rates. ([vLLM][3])                                                                                                |
+| **24×B300 production deployment**                 | Exact GLM-5.2 architecture but **NVFP4**, not the required FP8 checkpoint. Lossy and inadmissible for FP8 COGS proof.                                          | Starting mean TPOT near 40 ms at 16K was reduced to about 17 ms. At 8K, total throughput was about 162.2k tok/s and output throughput 17.65k tok/s; at 256K, about 57.7k and 219 tok/s respectively.                                                             | Mean TPOT approximately 16.6–19.2 ms. At 256K, mean TTFT about 28.7 s and P90 about 53.7 s. Launch HBM limits were 0.92 prefill and 0.90 decode; actual utilization and memory consumption were NR. | Production-oriented and reproducible with published commands: 24 B300 GPUs, 4P1D, NIXL, no prefix hits, random 16,384-token input and 1,000-token output. No repeated-run CI. Wrong precision is the decisive disconfirmation. ([vLLM][3])                                                                            |
+| **Speculative padding, MRV2, NVLink A2A and PCP** | Intended to be mathematically equivalent, subject to implementation correctness. Reported on NVFP4/B300 rather than exact FP8.                                 | Speculative padding: TPOT about 40→22 ms. MRV2: another approximately 11% lower TPOT. FlashInfer NVLink A2A: another approximately 4%. PCP at 32K prefill: 20.1k→27.3k tok/s, +35.8%.                                                                            | Only partial latency metrics; E2E tails, actual HBM and utilization mostly NR.                                                                                                                      | Medium-to-high engineering difficulty. Benefits interact and should not be multiplied independently. EP was slower than plain TP in one small configuration because communication overhead exceeded its benefit; the production team also accepted an 8% per-GPU efficiency loss to preserve KV capacity. ([vLLM][3]) |
+| **Open exact-FP8 optimization work**              | Intended mathematical-equivalence improvements for block-FP8 GLM-5.2.                                                                                          | Individual issue/PR claims include 1.9–5% E2E for reduce-scatter and 1.9–3.3% for an indexer fusion, alongside FP8 KV and Blackwell decode work. No consolidated exact-FP8 production frontier.                                                                  | Comprehensive latency, memory, utilization and tail results: NR.                                                                                                                                    | Active upstream work, not a mature fixed baseline. Do not sum point gains; they may overlap, regress, or depend on batch shape. ([GitHub][9])                                                                                                                                                                         |
+| **Startup and correctness risks**                 | Operational rather than quality-preserving optimization.                                                                                                       | A GLM-5 SGLang report observed 15–30 minute B200 compilation and 30 minutes on H200. vLLM 0.25.1 fixed a mixed-dtype fusion capable of corrupting outputs; the production GLM-5.2 deployment also found a host-memory leak visible only in long stability tests. | Startup latency dominates; short benchmarks failed to reveal the memory leak.                                                                                                                       | The compile report is a GLM-5 proxy, not an exact GLM-5.2 measurement. It nevertheless invalidates scale-to-zero assumptions for one- and five-minute windows. Long-duration correctness and soak tests are mandatory. ([GitHub][10])                                                                                 |
+
+**Evidence confidence:** high for checkpoint identity, public prices, and break-even arithmetic; medium for the mechanisms behind P/D, MTP, and kernel improvements; low for actual exact-FP8 unit economics until Arcten measures them.
+
+---
+
+## 4. Reproducible calculations
+
+### Core equations
+
+Let:
+
+* (R) = total node and infrastructure dollars per hour.
+* (U) = productive utilization, excluding idle and warm-tail time.
+* (r) = interruption, retry, and failure reserve.
+* (P) = uncached-prefill goodput in tokens/second.
+* (D) = generated-token goodput in tokens/second.
+
+[
+R_{\text{effective}} =
+\frac{
+R_{\text{GPU+CPU+RAM}}
++R_{\text{storage}}
++R_{\text{network}}
++R_{\text{orchestration}}
+}{
+U
+}
+(1+r)
+]
+
+[
+COGS_{\text{input}} =
+\frac{R_{\text{effective}}\times10^6}{3600P}
+]
+
+[
+COGS_{\text{output}} =
+\frac{R_{\text{effective}}\times10^6}{3600D}
+]
+
+[
+COGS_{\text{cold}}/M =
+\frac{R_{\text{node}}\times\text{cold-start hours}\times10^6}
+{\text{productive tokens before next cold start}}
+]
+
+For a request with uncached input (I_u), cached input (I_c), and output (O):
+
+[
+COGS_{\text{request}} =
+I_u C_{\text{input}}+
+I_c C_{\text{cached}}+
+O C_{\text{output}}+
+C_{\text{cold}}+
+C_{\text{payment}}
+]
+
+When prefill and decode use separate pools, each pool needs its own rate, utilization, failure reserve, and phase goodput. KV-transfer CPU and network costs must then be added. Do not insert simultaneous whole-system input/output throughput into both phase formulas; that double-counts capacity.
+
+### Current infrastructure price inputs
+
+| Capacity         |                Current listed price | Economic relevance                                                                                                                                                                                        |
+| ---------------- | ----------------------------------: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CoreWeave 8×B200 |   $68.80/h on-demand; $34.11/h spot | Baseline used in calculations. Includes CPU, RAM and local storage. ([CoreWeave][2])                                                                                                                      |
+| CoreWeave 8×H200 |   $50.44/h on-demand; $20.93/h spot | Exact FP8 fits, but full 1M context is not the official target configuration. B200 must be at least 1.36× faster on-demand or 1.63× faster on spot to have lower raw GPU cost per token. ([CoreWeave][2]) |
+| AWS 8×B200       |        $98.84/h capacity-block rate | At 85% utilization plus 10% reserve, Now requires approximately 25.4k prefill and 8.08k decode tok/s merely to break even. ([Amazon Web Services, Inc.][11])                                              |
+| AWS 8×H200       |                            $47.76/h | Relevant experimental comparator; does not establish performance. ([Amazon Web Services, Inc.][11])                                                                                                       |
+| Crusoe H200      | $4.29/GPU-hour, or $34.32 for eight | Illustrates how provider selection can exceed the expected scheduling margin. Availability, topology, commitments and exact node configuration must be verified. ([Crusoe][12])                           |
+
+CoreWeave advertises committed-use discounts of up to 60%, but an advertised maximum is not a sustainable COGS input until Arcten has a binding capacity contract. ([CoreWeave][2])
+
+### Planning scenarios
+
+These service rates are **sensitivity assumptions, not GLM-5.2-FP8 measurements**.
+
+| Scenario         | Capacity assumptions                     | Assumed prefill / decode | Input COGS | Output COGS |
+| ---------------- | ---------------------------------------- | -----------------------: | ---------: | ----------: |
+| Low load         | On-demand, 15% utilization, 15% reserve  |               15k / 1.5k |    $9.77/M |    $97.68/M |
+| Burst            | On-demand, 55%, 12% reserve              |                 30k / 6k |    $1.30/M |     $6.49/M |
+| Sustained        | On-demand, 85%, 10% reserve              |                45k / 10k |   $0.550/M |    $2.473/M |
+| Flex/spot        | Spot, 75%, 20% reserve                   |                45k / 10k |   $0.337/M |    $1.516/M |
+| Failure/fallback | 70% spot/30% on-demand, 55%, 30% reserve |                 30k / 6k |   $0.974/M |    $4.871/M |
+
+Consequences:
+
+* **Low load:** no tier is viable. The 756 GB model cannot be kept warm for sparse demand without minimum commitments or cross-customer aggregation.
+* **Burst:** even Now is output-negative at the assumed service rate.
+* **Sustained:** Standard input is already below cost and output has only about a 1% GPU margin before other expenses.
+* **Flex/spot:** Flex has only about a 16% component margin before payment, cold starts, orchestration, and support.
+* **Failure/fallback:** output COGS exceeds even Now pricing, showing why spot savings cannot be treated as fixed.
+
+### Price floor at the sustained assumptions
+
+Using a 30% gross-margin bar and a 2.9% variable payment fee—but still excluding cold starts, control plane and fixed fees—the approximate minimum sustainable prices are:
+
+| Infrastructure scenario                    |       Input | Cached input |      Output |
+| ------------------------------------------ | ----------: | -----------: | ----------: |
+| Sustained on-demand, with two cache reuses | **$0.82/M** |  **$0.13/M** | **$3.69/M** |
+| Flex spot, with two cache reuses           | **$0.50/M** |  **$0.07/M** | **$2.26/M** |
+
+Therefore:
+
+* The proposed Priority price of **$0.70/$0.18/$3.00** misses the input and output margin floor under the sustained planning assumptions.
+* Standard is materially below it.
+* Flex is below even the spot-based input and output floor.
+* Actual required prices would be higher after orchestration, support, cold-start amortization and fixed payment costs.
+
+### Workload distributions
+
+Illustrative gross margin after a 2.9% variable payment fee:
+
+* Now, Priority and Standard use the sustained on-demand scenario.
+* Flex uses the spot scenario.
+* Cached prompts are retained for five minutes and reused twice.
+* Cold starts, fixed payment fees, observability, support, taxes and control-plane expenses remain excluded.
+
+| Workload                          |   Now | Priority |   Standard |  Flex |
+| --------------------------------- | ----: | -------: | ---------: | ----: |
+| 4k input / 1k output / 10% cached | 50.1% |    16.9% |  **−6.1%** | 13.2% |
+| 32k / 4k / 60% cached             | 51.1% |    20.7% |  **−2.6%** | 16.1% |
+| 128k / 8k / 75% cached            | 53.3% |    24.9% |       0.4% | 19.2% |
+| 64k / 1k / 20% cached             | 57.1% |    19.9% | **−10.1%** | 14.1% |
+
+The model therefore depends strongly on high cache reuse and sustained utilization. Output-heavy agent workloads are particularly dangerous because decode capacity is harder to defer and the proposed output discounts are large.
+
+### Cached-input economics
+
+From the model configuration, a lower-bound FP8 MLA KV payload for one 1M-token prefix is:
+
+[
+(512+64)\times78\times1\text{ byte/token}
+=44{,}928\text{ bytes/token}
+]
+
+That is approximately **44.9 GB per 1M-token prefix**, excluding allocator overhead, fragmentation, indexer state, MTP buffers and runtime workspace. Fifteen such prefixes would consume approximately 674 GB; combined with the 756 GB checkpoint, that nearly exhausts a B200 node’s 1,440 GB HBM before runtime overhead. ([Hugging Face][4])
+
+A proportional HBM opportunity-cost calculation for retaining one such prefix for five minutes gives:
+
+| Capacity       | Five-minute HBM opportunity cost | Cached hits required to cover price                   |
+| -------------- | -------------------------------: | ----------------------------------------------------- |
+| B200 on-demand |                           $0.179 | Now: 0.69; Priority: 0.99; Standard: 1.49; Flex: 2.24 |
+| B200 spot      |                           $0.089 | Flex: 1.11                                            |
+
+Operational interpretation:
+
+* Standard needs approximately **two paid cache hits** within five minutes.
+* Flex needs approximately **three on-demand hits** or **two spot hits**.
+* This is only an opportunity-cost heuristic. It overstates incremental cost when a node would otherwise be idle and understates it when HBM pressure forces another node or reduces batching capacity.
+* CPU-tier caching can reduce HBM pressure but adds transfer latency, bandwidth demand, and failure modes.
+
+### Loading, compilation, storage, and payments
+
+The GLM-5 SGLang compile report provides a 15–30 minute B200 proxy. At $68.80/hour, that is **$17.20–$34.40** of node time per compilation event. Repeating it every 50M productive tokens adds $0.344–$0.688/M; every 500M tokens adds $0.034–$0.069/M. The exact GLM-5.2 model load and compilation time must be measured independently. ([GitHub][10])
+
+CoreWeave hot object storage is $0.06/GB/month, making one 756 GB copy approximately $45/month; distributed file storage is approximately $53/month. Transfer within CoreWeave and to/from the internet is listed as free. Storage dollars are minor relative to GPU time, but transferring and materializing 756 GB during recovery can make the one- and five-minute windows impossible. ([CoreWeave][2])
+
+Stripe’s illustrative domestic-card rate is 2.9% plus $0.30. Arcten should bill through account top-ups or consolidated invoices; applying a $0.30 fee to individual API requests would dominate request economics. ([Stripe][13])
+
+Spot interruption notices cannot be treated as an SLA. AWS notices are two minutes and best-effort; GCP’s default is a 30-second best-effort shutdown period; Azure provides approximately 30 seconds and guarantees no minimum run time. Retry waste and warm fallback capacity must therefore be measured as costs, not treated as edge cases. ([AWS Documentation][14])
+
+---
+
+## 5. What is already commodity
+
+As of August 1, 2026, current stable releases include vLLM 0.25.1, SGLang 0.5.16, and Transformers 5.14.1. These should be pinned by commit or container digest rather than installed as floating “latest” dependencies. ([GitHub][15])
+
+The following are not defensible moats by themselves:
+
+| Commodity capability                     | Current baseline                                                   |
+| ---------------------------------------- | ------------------------------------------------------------------ |
+| OpenAI-compatible serving                | Included in vLLM and SGLang                                        |
+| Continuous batching and chunked prefill  | Standard engine features                                           |
+| Paged KV memory                          | Standard vLLM capability                                           |
+| Prefix caching                           | Standard; each DP rank already has an independent cache            |
+| CUDA graphs and kernel fusion            | Standard, though model-specific tuning still matters               |
+| FlashAttention, FlashInfer and FlashMLA  | Available engine backends                                          |
+| FP8 and other quantized kernels          | Supported, with maturity varying by model/hardware                 |
+| TP, DP, EP, PP and context parallelism   | Standard multi-GPU mechanisms                                      |
+| Speculative decoding/MTP                 | Available; exact-model correctness still requires testing          |
+| Prefill/decode disaggregation            | Available and useful for independently controlling TTFT and ITL    |
+| Basic autoscaling, queueing and spot use | Infrastructure practice rather than proprietary serving technology |
+
+vLLM already exposes continuous batching, chunked prefill, prefix caching, CUDA graphs, optimized attention/MoE kernels, speculative decoding, P/D disaggregation, and multiple parallelism modes. It also documents that cache-aware routing between data-parallel ranks can improve prefix-cache reuse. ([vLLM][16])
+
+---
+
+## 6. What could become proprietary
+
+The defensible layer is the control system built on top of the commodity engine:
+
+1. **Deadline-aware admission and scheduling.** Predict input length, output length, phase cost, MTP acceptance, and remaining slack; decide when to batch, start, migrate, or reject a request.
+
+2. **Marginal-cost fleet routing.** Optimize across exact checkpoint revision, hardware type, provider price, interruption probability, data residency, cache locality, and fallback state.
+
+3. **Cache-value estimation.** Admit and evict prefixes based on predicted reuse, HBM opportunity cost, transfer cost, tenant isolation, and the effect on batch capacity.
+
+4. **Dynamic prefill/decode pool sizing.** Reallocate capacity according to queue composition while pricing the KV-transfer and tail-latency consequences.
+
+5. **Spot recovery with deadline preservation.** Checkpoint request state, transfer or recompute KV economically, and select on-demand fallback based on remaining slack.
+
+6. **Identity and quality enforcement.** Continuously verify model manifests, tokenizer output, deterministic canaries, sampler distributions, and runtime regressions.
+
+7. **Trace-derived pricing.** Estimate the true marginal cost of each request before accepting it rather than applying a fixed average batching discount.
+
+These become proprietary only if they produce repeatable savings over ordinary continuous batching and SLO-aware routing. An internal scheduler with no measured advantage is not a moat.
+
+---
+
+## 7. Three experiments Arcten can run within two weeks
+
+### Experiment 1 — Exact-FP8 performance frontier
+
+**Purpose:** determine whether any proposed tier clears its break-even threshold.
+
+**Configuration**
+
+* Pin the exact model revision and complete identity manifest.
+* Compare 8×H200 and 8×B200.
+* Test vLLM 0.25.1 and SGLang 0.5.16, plus any required pinned upstream GLM-5.2 fixes.
+* FP8 weights and FP8 E4M3 KV only.
+* Test MTP depths 0, 1, 3 and 5.
+* Inputs: 8K, 32K, 128K, 256K and 1M.
+* Outputs: 256, 1K and 4K.
+* Cache off, then controlled cache-hit ratios.
+* Concurrency and open-loop arrival-rate sweeps through saturation.
+
+**Report**
+
+* Separate prefill and decode goodput.
+* TTFT, TPOT, ITL and E2E at P50/P90/P99.
+* GPU SM, tensor-core, HBM, DRAM and NVLink utilization.
+* Peak/steady HBM, host RAM and CPU.
+* MTP accepted length and acceptance rate.
+* OOM, invalid output and retry rates.
+* Five or more runs per point, with bootstrap 95% confidence intervals.
+
+**Quality tests**
+
+* Greedy token/logit comparison against an unoptimized exact-FP8 reference.
+* Fixed-seed sampling comparisons.
+* Distribution tests for stochastic sampling.
+* Long-context retrieval, tool calling, structured output and agentic benchmarks.
+
+**Pass gate**
+
+At minimum, exceed the zero-margin table. For a commercially credible result, exceed the relevant 30%-margin threshold with P99 completion inside the tier’s target window.
+
+### Experiment 2 — Deadline-aware scheduler replay
+
+**Purpose:** isolate the value of waiting from ordinary continuous batching.
+
+Compare:
+
+* FIFO continuous batching.
+* Earliest-deadline-first.
+* Slack-aware batching.
+* Predicted-cost/deadline scheduling.
+* Cache-aware routing.
+* Colocated versus disaggregated prefill/decode.
+
+Replay low-load, synchronized-burst, sustained-load and output-heavy traces. Include Now, one-minute, five-minute and best-effort queues on the same fleet.
+
+**Primary outputs**
+
+* Productive utilization.
+* GPU-seconds per million input and output tokens.
+* Deadline-miss and refund rate.
+* P50/P90/P99 completion time.
+* Extra node count required during bursts.
+* Savings attributable specifically to the delayed window.
+
+**Kill criterion**
+
+Stop treating delay as a differentiator if the five-minute queue reduces full COGS by less than approximately 15% at representative load, or if it requires the same peak warm capacity as Now.
+
+### Experiment 3 — Cache, spot and failure economics
+
+**Purpose:** test the assumptions required by Standard and Flex.
+
+Run 1-, 5- and 15-minute HBM retention, CPU-tier cache, and no-cache baselines. Inject spot termination, capacity-unavailable, node crash, KV-transfer failure and corrupted-worker scenarios. Maintain an on-demand fallback pool of varying sizes.
+
+Measure:
+
+* Cache hits per retained prefix.
+* HBM consumed per paid cached token.
+* Cache-driven batching loss.
+* Restart, model-load and compilation time.
+* Wasted compute and duplicate token generation.
+* Queue growth and deadline misses during recovery.
+* Effective spot discount after retry and fallback reserve.
+
+**Kill criteria**
+
+* Fewer than two paid hits per five-minute Standard prefix.
+* Fewer than two spot or three on-demand hits per Flex prefix.
+* More than 20% of spot savings consumed by retry/fallback.
+* P99 completion targets fail during realistic interruption sequences.
+
+---
+
+## 8. Three-month engineering recommendation
+
+### Month 1: establish truth
+
+* Build the immutable model identity manifest.
+* Implement the exact-FP8 benchmark and quality harness.
+* Benchmark B200 against H200; do not assume the more expensive GPU has better dollars per token.
+* Instrument phase-level GPU time, HBM, utilization, queue slack and retry cost.
+* Obtain real provider quotes for on-demand, committed and interruptible capacity.
+* Use cloud credits only for experiments; report COGS at contractual cash prices.
+
+### Month 2: build the control plane
+
+* Implement deadline-aware admission and queueing.
+* Add per-request prefill/decode cost prediction.
+* Add cache-aware routing and cache-value telemetry.
+* Prototype P/D pool resizing.
+* Implement interruption injection, restart automation and on-demand fallback.
+* Collect design-partner traces through Gateway/BYOK where possible.
+* Seek written OEM/wholesale permission for any provider-based fallback.
+
+### Month 3: narrow pilot
+
+Launch only after representative traces meet all of these gates:
+
+* At least **30% gross margin after the complete COGS model**, not GPU cost alone.
+* At least 80–85% productive utilization during the committed operating period.
+* P99 completion within the marketed target under burst and failure tests.
+* Stable exact-FP8 quality across the full runtime matrix.
+* Cache reuse sufficient for the cached-input price.
+* Cold-start and interruption reserves included in pricing.
+* A minimum-spend or anchor-volume arrangement sufficient to keep the checkpoint warm.
+* Written commercial rights for every non-self-hosted fallback route.
+
+### Product sequence
+
+1. **Gateway/BYOK for trace collection and demand discovery.**
+2. **Now** only for customers or aggregate demand sufficient to keep capacity warm.
+3. **Experimental Priority**, advertised initially as a percentile or average completion target, not a hard one-minute deadline.
+4. Hold **Standard** until exact-FP8 throughput or contracted compute lowers the lower-bound price floor materially.
+5. Hold **Flex** until spot/fallback experiments demonstrate at least a 30% margin after interruption reserve.
+
+Do not launch all four tiers simultaneously. The current evidence supports market testing of the scheduler, not a four-tier price commitment.
+
+---
+
+## 9. Commercial and legal structure
+
+| Structure                    | Assessment                                                                                                                                                                                                                                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Self-hosted open weights** | Preferred. The checkpoint is MIT-licensed and permits use, modification, distribution, sublicensing and sale, subject to retaining the license notice. ([Hugging Face][17])                                                                                                                                   |
+| **Gateway/BYOK**             | Customer owns the provider account and token relationship; Arcten charges for routing/control. Provider terms and data-handling obligations still apply.                                                                                                                                                      |
+| **OEM or wholesale**         | Acceptable only with explicit written resale, pricing and SLA terms.                                                                                                                                                                                                                                          |
+| **Retail API resale**        | Do not assume it is permitted. Z.ai’s terms expressly allow API integration into applications and downstream systems for end users, but do not expressly grant standalone token/API passthrough resale. Commercial/legal review and written approval are required. ([Overview - Z.AI DEVELOPER DOCUMENT][18]) |
+
+---
+
+## 10. Explicit reasons the approach might fail
+
+1. **Insufficient compatible demand.** A 756 GB checkpoint cannot be kept warm economically at low load.
+
+2. **Delay does not improve saturated economics.** When ordinary continuous batching already fills the GPU, waiting adds queue latency without reducing execution cost.
+
+3. **Bursts remain synchronized.** Customer jobs may naturally arrive on cron, CI, market-close or agent-cycle boundaries, preserving the same peak-capacity requirement.
+
+4. **Exact FP8 underperforms the NVFP4 headlines.** Current public production results cannot be transferred across precision formats.
+
+5. **Long contexts destroy concurrency.** KV memory, indexer work and TTFT increase sharply, while a few 1M-token requests can consume most available HBM.
+
+6. **Output-heavy workloads dominate.** Decode remains sequential and latency-sensitive; the proposed output discounts may be too aggressive.
+
+7. **Spot savings disappear after failures.** Retry compute, cold loading, fallback capacity and deadline refunds can exceed the headline spot discount.
+
+8. **One- and five-minute windows are too short for recovery.** Compilation and loading can exceed the entire completion window.
+
+9. **Cache reuse is lower than assumed.** User-specific prompts, privacy isolation and changing tool state may prevent cross-request prefix reuse.
+
+10. **Cache locality conflicts with cheapest-capacity routing.** Moving requests to a cheaper provider may lose the prefix cache and cost more overall.
+
+11. **Topology changes correctness.** Recent mixed-dtype, MTP, EP and cache bugs show that a configuration can alter quality or corrupt output despite using the same weight files.
+
+12. **Provider capacity or prices change.** List-price spot supply is not a committed fleet.
+
+13. **Retail resale rights are unavailable.** Arcten may be forced to self-host or negotiate wholesale terms.
+
+14. **Thin margins are consumed by non-GPU costs.** Payments, observability, support, abuse prevention, retries, credits/refunds and engineering operations are significant at Priority, Standard and Flex prices.
+
+15. **Customers do not accept probabilistic timing.** Averages may be commercially insufficient when workflows require a deterministic deadline.
+
+16. **The market already prices delay.** Existing batch services offer substantial discounts, albeit with much longer windows, reducing the novelty of “wait for cheaper inference.”
+
+---
+
+## Reproducible artifacts
+
+[Download the calculation bundle](sandbox:/mnt/data/arcten_glm52_fp8_reproducible_calculations.zip)
+
+[View the Python cost model](sandbox:/mnt/data/arcten_glm52_fp8_cost_model.py)
+
+[1]: https://docs.z.ai/guides/overview/pricing "https://docs.z.ai/guides/overview/pricing"
+[2]: https://www.coreweave.com/pricing "https://www.coreweave.com/pricing"
+[3]: https://vllm.ai/blog/2026-07-23-glm-5.2-nvfp4-b300-pd "https://vllm.ai/blog/2026-07-23-glm-5.2-nvfp4-b300-pd"
+[4]: https://huggingface.co/zai-org/GLM-5.2-FP8/tree/main "https://huggingface.co/zai-org/GLM-5.2-FP8/tree/main"
+[5]: https://huggingface.co/zai-org/GLM-5.2-FP8/blob/main/config.json "https://huggingface.co/zai-org/GLM-5.2-FP8/blob/main/config.json"
+[6]: https://recipes.vllm.ai/zai-org/GLM-5.2 "https://recipes.vllm.ai/zai-org/GLM-5.2"
+[7]: https://huggingface.co/zai-org/GLM-5.2-FP8/blob/main/README.md "https://huggingface.co/zai-org/GLM-5.2-FP8/blob/main/README.md"
+[8]: https://arxiv.org/pdf/2603.12201 "https://arxiv.org/pdf/2603.12201"
+[9]: https://github.com/vllm-project/vllm/issues/46654 "https://github.com/vllm-project/vllm/issues/46654"
+[10]: https://github.com/sgl-project/sglang/issues/20401 "https://github.com/sgl-project/sglang/issues/20401"
+[11]: https://aws.amazon.com/ec2/capacityblocks/pricing/ "https://aws.amazon.com/ec2/capacityblocks/pricing/"
+[12]: https://www.crusoe.ai/cloud/pricing "https://www.crusoe.ai/cloud/pricing"
+[13]: https://stripe.com/pricing "https://stripe.com/pricing"
+[14]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-instance-termination-notices.html "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-instance-termination-notices.html"
+[15]: https://github.com/vllm-project/vllm/releases "https://github.com/vllm-project/vllm/releases"
+[16]: https://docs.vllm.ai/en/latest/ "https://docs.vllm.ai/en/latest/"
+[17]: https://huggingface.co/zai-org/GLM-5.2-FP8/blob/73d6d181434b25d8731281898cf2edae19019f03/LICENSE "https://huggingface.co/zai-org/GLM-5.2-FP8/blob/73d6d181434b25d8731281898cf2edae19019f03/LICENSE"
+[18]: https://docs.z.ai/legal-agreement/terms-of-use "https://docs.z.ai/legal-agreement/terms-of-use"

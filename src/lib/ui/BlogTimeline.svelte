@@ -1,17 +1,11 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom';
-
-	type BlogHeading = {
-		id: string;
-		text: string;
-		level: number;
-		children: BlogHeading[];
-	};
+	import type { BlogHeading } from '$lib/content/blog.server';
 
 	type FlatHeading = Omit<BlogHeading, 'children'>;
 
-	let { headings } = $props<{ headings: BlogHeading[] }>();
+	let { headings }: { headings: BlogHeading[] } = $props();
 
 	const flatHeadings = $derived(flattenHeadings(headings));
 	let activeId = $state('');
@@ -210,7 +204,9 @@
 					}
 				}}
 				class={`fixed z-[30] w-[20rem] rounded-[28px] border border-foreground/10 bg-background/95 p-4 shadow-[0_20px_60px_rgba(0,0,0,0.12)] backdrop-blur-sm transition-[transform,opacity] duration-100 ${
-					isOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-1.5 opacity-0'
+					isOpen
+						? 'pointer-events-auto translate-x-0 opacity-100'
+						: 'pointer-events-none translate-x-1.5 opacity-0'
 				}`}
 				style={`left: ${panelX}px; top: ${panelY}px;`}
 			>

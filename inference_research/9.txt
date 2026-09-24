@@ -1,0 +1,716 @@
+# GLM‑5.2 FP8 competitive economics
+
+**Public-information reconstruction as of August 1, 2026.** Prices are per million tokens unless noted.
+
+## 1. Executive conclusion
+
+Arcten’s thesis is directionally correct: a longer completion window can reduce cost by increasing productive utilization, admitting work only when capacity is cheap, and tolerating interruption. It does **not** make sequential decode arbitrarily cheap. For GLM‑5.2 FP8, output-token economics remain the binding constraint.
+
+The exact public reference is `zai-org/GLM-5.2-FP8`: approximately 743B total parameters, 39B active parameters, and a 1,048,576-token context. The FP8 checkpoint is roughly 756 GB. FP4, NVFP4, shorter-context, or ambiguously versioned services are not exact comparators. ([vLLM Recipes][1])
+
+Using:
+
+* An exact public 8×H200 GLM‑5.2-FP8 benchmark.
+* Public H200 rental prices.
+* A third-party owner/hyperscaler H200 TCO proxy.
+* Explicit reserves for non-GPU infrastructure, failures, and orchestration.
+
+The modeled result is:
+
+| Arcten tier  | Proposed input / cached / output | Modeled output COGS at owner-scale, 85% utilization | Output gross margin | Recommendation                                        |
+| ------------ | -------------------------------: | --------------------------------------------------: | ------------------: | ----------------------------------------------------- |
+| **Now**      |            $1.40 / $0.26 / $4.40 |                                               $2.50 |                 43% | Plausible with wholesale or owner-equivalent capacity |
+| **Priority** |            $0.70 / $0.18 / $3.00 |                                               $2.50 |                 17% | Pilot only; little failure or demand-mix tolerance    |
+| **Standard** |            $0.50 / $0.12 / $2.50 |                                               $2.50 |    Approximately 0% | Do not commit at this price on H200                   |
+| **Flex**     |            $0.40 / $0.08 / $1.80 |                                               $2.50 |                −39% | Unsustainable on the public H200 evidence             |
+
+The modeled input COGS in the same sustained-load scenario is approximately **$0.159/M**. Cached-input COGS can be approximately **$0.070/M** at twenty successful cache reuses per prefix-hour, but this is an optimistic residency lower bound, not a generally achievable rate.
+
+### Commercial verdict
+
+**Prices Arcten can plausibly match**
+
+* Fireworks, Novita, Z.AI, and Together’s headline **$1.40 input / $4.40 output** level—but only after Arcten obtains owner-equivalent or wholesale capacity and maintains high utilization. Together’s service is FP4 and therefore not an exact technical comparator. ([Fireworks AI][2])
+* Sail ASAP at **$1.00 / $0.20 / $3.50**, with a thinner but plausible margin.
+* GMICloud’s approximately **$0.924 / $0.172 / $2.904** OpenRouter route, but only near owner-scale utilization and with very little reserve.
+
+**Prices Arcten should not match yet**
+
+* Sail Standard at **$0.50 / $0.12 / $2.50**: approximately break-even under the optimistic owner-H200 case.
+* Sail Flex at **$0.40 / $0.08 / $1.80**: below the modeled H200 output floor.
+* StreamLake and Novita’s approximately 75%-discounted OpenRouter routes near **$1.11 output**: below even the public owner-H200 floor, and likely dependent on promotion, strategic channel economics, materially better hardware economics, or subsidy. ([Sail Research][3])
+* DeepInfra’s $2.40 output and Baseten’s $4.40 output as evidence for FP8 economics: both publicly describe lower-precision execution. ([DeepInfra][4])
+
+A B200 fleet may materially improve this result. SemiAnalysis reports B200 as 45% more cost-efficient than H200 at one FP8 GLM‑5/5.1 operating point, but this is not an exact GLM‑5.2 benchmark. Applying it only as an upside sensitivity gives roughly **$1.6–$2.1/M output** at owner scale. Arcten should not price against that projection until it reproduces it on the exact checkpoint. ([InferenceX][5])
+
+---
+
+## 2. Evidence table
+
+“Exact” below means public evidence supports FP8 weights and full context. It does **not** mean that a provider has disclosed an immutable weight hash, tokenizer hash, KV-cache dtype, engine image, or sampling configuration. Those require contractual attestation.
+
+| Provider or route                                                          | Public SKU and current price                                                                                                  | Comparability                                                                                                                                                                                                                                                   | Publicly evidenced mechanism                                                                                                                                                                                     | Economics reconstruction                                                                                                                                                                                                                             |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Sail**                                                                   | `zai-org/GLM-5.2-FP8`; Standard $0.50/$0.12/$2.50, Priority $0.70/$0.18/$3.00, Flex $0.40/$0.08/$1.80, ASAP $1.00/$0.20/$3.50 | Strongest exact public comparator                                                                                                                                                                                                                               | Sail describes CUDA work, SGLang changes, multi-provider operation, spot capacity, and reliable failover. Its one- and five-minute windows are average turn-time objectives, not deadlines. ([Sail Research][3]) | ASAP is consistent with owner/wholesale economics. Priority is thin. Standard is near H200 break-even. Flex likely needs B200-class efficiency, unusually cheap idle capacity, cross-subsidy, or willingness to accept low/negative marginal margin. |
+| **DeepInfra**                                                              | FP4; full 1,048,576 context; Standard $0.75/$0.14/$2.40, Priority $1.125/$0.21/$3.60, Flex $0.60/$0.112/$1.92                 | **Not exact:** FP4 is lossy relative to FP8                                                                                                                                                                                                                     | Direct provider API; public sources do not disclose its procurement or fleet cost                                                                                                                                | Plausible FP4 pricing, but it does not establish a $2.40 FP8 output floor. ([DeepInfra][4])                                                                                                                                                          |
+| **Together**                                                               | FP4, 262K context, up to 128K output; $1.40/$0.26/$4.40                                                                       | **Not exact:** FP4 and materially shorter context                                                                                                                                                                                                               | Serverless, PTU, dedicated, and GPU-cluster products. Current PTU tariff is $0.05/PTU-minute with 35,731 input, 192,400 cached, and 9,620 output TPM per PTU. ([Together AI docs][6])                            | List prices are tariffs, not disclosed COGS. The PTU tariff independently implies about $1.40/M input, $0.26/M cached, and $5.20/M output at full PTU consumption.                                                                                   |
+| **Fireworks**                                                              | Serverless $1.40/$0.14/$4.40; Priority $1.75/$0.18/$5.50; Fast $2.10/$0.21/$6.60                                              | **Provisionally exact.** Fireworks has a separate exact FP8 checkpoint page, but that page says serverless unsupported; its serverless page uses a generic GLM‑5.2 path. Fireworks says Standard and Fast use the same weights and quality. ([Fireworks AI][7]) | Direct shared serverless plus on-demand deployments. Public on-demand H200 price is $7/GPU-hour, far above likely internal fleet cost. ([Fireworks AI][8])                                                       | The $4.40 output rate is credible with owner/wholesale fleet economics and high utilization. It cannot be reproduced by renting Fireworks’ own H200 on-demand product.                                                                               |
+| **Baseten**                                                                | Model API $1.40/$0.14/$4.40; Fast $2.10/$0.21/$6.60                                                                           | **Not exact according to Baseten’s own technical description:** in-house NVFP4 derived from FP8. OpenRouter’s FP8 tag conflicts with the provider’s source.                                                                                                     | Blackwell, NVFP4, cache-aware routing, P/D disaggregation, and MTP. Baseten reports 280+ TPS and 2× TPS on observed P/D workload shapes. ([Baseten][9])                                                          | Strong evidence for NVFP4 Blackwell economics, not for native FP8 COGS. “Equivalent BFCL performance” is not weight or distribution equivalence.                                                                                                     |
+| **StreamLake**                                                             | OpenRouter route: $0.3528/$0.06552/$1.1088, 1,024,000 context, explicit 74.8% discount                                        | FP8 route metadata, but context is 24,576 tokens below the canonical 1,048,576 limit                                                                                                                                                                            | StreamLake officially added GLM‑5.2-FP8 deployment on July 3. OpenRouter presents the route as a discounted provider route. ([StreamLake][10])                                                                   | Not a valid exact full-context comparison and not a prudent steady-state price anchor. The output price is below public owner-H200 economics. Treat as promotional or strategic-channel pricing unless proved otherwise.                             |
+| **OpenRouter**                                                             | Pass-through provider prices; BYOK separately supported                                                                       | OpenRouter does not execute the model                                                                                                                                                                                                                           | OpenRouter states that inference prices are passed through without markup; it charges fees when purchasing credits and fees for BYOK usage after an allowance. ([OpenRouter][11])                                | Its COGS are routing, payments, support, and provider settlement—not GPU execution. An OpenRouter route is evidence about the upstream provider’s offer, not OpenRouter’s GPU economics.                                                             |
+| **Novita direct**                                                          | FP8, 1,048,576 context, 131,072 max output; $1.40/$0.26/$4.40                                                                 | Good page-level exact comparator; no immutable checkpoint attestation                                                                                                                                                                                           | Direct serverless provider API                                                                                                                                                                                   | Matchable with owner/wholesale economics. ([Novita AI][12])                                                                                                                                                                                          |
+| **Novita through OpenRouter**                                              | $0.3598/$0.06682/$1.1308; explicit 74.3% discount                                                                             | Route metadata says FP8/full context                                                                                                                                                                                                                            | Discounted channel route                                                                                                                                                                                         | Not sustainable on the public H200 evidence; materially below Novita’s own direct list price. Treat as promotion or negotiated channel economics.                                                                                                    |
+| **GMICloud**                                                               | OpenRouter: $0.924/$0.1716/$2.904, 34% discount, full context                                                                 | Good public FP8 comparator; no hash attestation                                                                                                                                                                                                                 | GMI identifies `zai-org/GLM-5.2-FP8` and says it runs on H100/H200 infrastructure. ([GMI Cloud][13])                                                                                                             | Plausible only near owner-scale utilization; approximately 14% modeled output margin at 85% utilization.                                                                                                                                             |
+| **Baidu / Alibaba routes**                                                 | Baidu $0.756/$0.1404/$2.376 with 46% discount; Alibaba $0.966/$0.1932/$3.036                                                  | OpenRouter metadata says FP8/full context; Baidu was degraded in the captured endpoint status                                                                                                                                                                   | Hyperscaler or strategic provider routes; exact procurement and subsidy unknown                                                                                                                                  | Alibaba is plausible at owner-scale. Baidu’s price is below the H200 base-case floor and was accompanied by degraded status; it may reflect hyperscaler economics, promotion, or both.                                                               |
+| **SiliconFlow / AtlasCloud / Z.AI**                                        | $1.19/$0.221/$3.74; $1.26/$0.234/$3.96; and $1.40/$0.26/$4.40 respectively                                                    | OpenRouter metadata says FP8/full context                                                                                                                                                                                                                       | Direct or routed provider services; procurement unknown                                                                                                                                                          | All three are compatible with owner/wholesale H200 economics. They are not evidence that a startup can reach those prices using public rental capacity.                                                                                              |
+| **Decart / CoreWeave / Inceptron / Chutes / Wafer / Parasail / Ionstream** | Various prices from $1.80–$4.40 output                                                                                        | **Not exact:** FP4, and some routes also have shorter context                                                                                                                                                                                                   | Provider routes                                                                                                                                                                                                  | Exclude from FP8 pricing comparisons.                                                                                                                                                                                                                |
+
+### Commercial mode distinctions
+
+* **Open-weight self-hosting:** Arcten operates the checkpoint and bears GPU, utilization, failure, privacy, and exactness risk. The model repository is MIT-licensed, but customer, infrastructure, data, and downstream-use obligations remain separate. ([Hugging Face][14])
+* **Wholesale/OEM:** Arcten has negotiated resale or white-label rights, pricing, volume commitments, data terms, and SLAs.
+* **BYOK:** The customer has the provider relationship and supplies its account or key. Arcten supplies routing and control-plane software.
+* **Retail API resale:** A provider’s public API price does not establish sublicensing or resale rights.
+* **Cloud credits and launch promotions:** Useful for experiments, but excluded from sustainable COGS.
+
+---
+
+## 3. Reproducible calculations
+
+### 3.1 Exactness manifest
+
+Before benchmarking or selling an “identical model,” pin:
+
+```text
+checkpoint repository + immutable commit
+SHA-256 of every weight shard
+tokenizer.json / tokenizer.model hashes
+tokenizer_config.json
+chat_template
+config.json
+generation_config.json
+maximum prompt and completion limits
+weight precision and quantization recipe
+KV-cache dtype
+engine/container image digest
+CUDA, driver, NCCL, FlashInfer, CUTLASS versions
+reasoning and tool-call parsers
+sampling defaults, stop handling, and seed behavior
+MTP/speculative decoding configuration
+```
+
+Quality categories:
+
+| Category                     | Meaning                                                                                                                                                           |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Bitwise identity**         | Same binaries, hardware, kernel paths, reduction order, seed, and execution schedule produce identical bytes. Generally unrealistic across distributed providers. |
+| **Mathematical equivalence** | The same mathematical transformation is implemented, although floating-point reduction order may change low-order bits.                                           |
+| **Distribution-preserving**  | Sampling from the same target distribution; target-verified speculative decoding can qualify even though outputs are not bitwise identical.                       |
+| **Lossy approximation**      | FP4/NVFP4/MXFP4 weights, reduced-precision KV relative to a higher-precision reference, approximate attention, or model substitution.                             |
+
+### 3.2 Benchmark basis
+
+The public GPUStack benchmark uses:
+
+* `zai-org/GLM-5.2-FP8`
+* 8×NVIDIA H200
+* vLLM 0.24.0 and SGLang 0.5.14
+* TP8/DP8, DP attention, DeepEP, `max-running-requests=256`, and FP8 E4M3 KV in its optimized configuration. ([GPU Stack][15])
+
+The current releases at the cutoff are vLLM 0.26.0 and SGLang 0.5.16, so the benchmark must be repeated both at its original pins and at current pinned images. ([GitHub][16])
+
+Two workload-derived phase proxies are used:
+
+```text
+Prefill proxy
+= 3,201,200 input tokens / 135.63 seconds
+= 23,602 input tokens/second per 8×H200 node
+
+Decode proxy
+= 400,000 output tokens / 266.01 seconds
+= 1,505.53 output tokens/second per 8×H200 node
+```
+
+The first comes from the optimized 32K-input/100-output case; the second comes from the 1K-input/2K-output case. These are workload proxies, not isolated kernel microbenchmarks, and therefore carry substantial model risk. ([GPU Stack][15])
+
+### 3.3 Complete phase COGS formula
+
+```text
+Phase COGS per 1M tokens
+= node price per hour
+  × non-GPU/failure multiplier
+  × 1,000,000
+  ÷ (phase tokens/second × 3,600 × effective utilization)
+```
+
+The multiplier covers:
+
+```text
+model loading and compilation
+CPU, RAM, storage, and networking
+orchestration and monitoring
+interruption, retry, and failure reserve
+provider and payment overhead
+```
+
+It does not include sales, general R&D, or desired profit margin.
+
+### 3.4 Capacity-price assumptions
+
+| Capacity case             |   Public node-price basis | Modeled multiplier |
+| ------------------------- | ------------------------: | -----------------: |
+| Owner/wholesale proxy     |  8×$1.22 = **$9.76/hour** |              1.18× |
+| Nebius preemptible H200   | 8×$2.45 = **$19.60/hour** |              1.35× |
+| Nebius on-demand H200     | 8×$4.50 = **$36.00/hour** |              1.20× |
+| Failure-heavy preemptible |           **$19.60/hour** |              1.50× |
+
+Nebius lists H200 at $2.45/GPU-hour preemptible and $4.50 on demand. The $1.22 owner-cost input is a SemiAnalysis hyperscaler-TCO proxy, not a generally available startup rental price. ([Nebius][17])
+
+### 3.5 Low-load, burst, sustained-load, and failure scenarios
+
+| Scenario                        | Effective utilization | Input COGS | Output COGS |
+| ------------------------------- | --------------------: | ---------: | ----------: |
+| Low-load warm on-demand fleet   |                   10% | **$5.084** | **$79.706** |
+| Bursty preemptible fleet        |                   45% | **$0.692** | **$10.849** |
+| Sustained owner/wholesale fleet |                   85% | **$0.159** |  **$2.500** |
+| Failure-heavy preemptible fleet |                   70% | **$0.494** |  **$7.749** |
+
+### Utilization sensitivity
+
+| Capacity basis         | 45% utilization |     70% |    85% |    90% |    92% |
+| ---------------------- | --------------: | ------: | -----: | -----: | -----: |
+| Owner/wholesale input  |          $0.301 |  $0.194 | $0.159 | $0.151 | $0.147 |
+| Owner/wholesale output |          $4.722 |  $3.036 | $2.500 | $2.361 | $2.310 |
+| Preemptible input      |          $0.692 |  $0.445 | $0.366 | $0.346 | $0.338 |
+| Preemptible output     |         $10.849 |  $6.974 | $5.744 | $5.424 | $5.307 |
+| On-demand input        |          $1.130 |  $0.726 | $0.598 | $0.565 | $0.553 |
+| On-demand output       |         $17.712 | $11.387 | $9.377 | $8.856 | $8.664 |
+
+This is why waiting helps only when it moves the service materially to the right in the utilization table or permits materially cheaper capacity.
+
+### 3.6 Cached-input economics
+
+The model configuration contains 78 layers, a KV LoRA rank of 512, and a 64-dimensional RoPE component. An optimistic FP8 latent-state lower bound is:
+
+```text
+(512 + 64) × 78 × 1 byte
+= 44,928 bytes per cached token
+= 44.928 GB per million cached tokens
+```
+
+The real footprint can be higher because of index state, runtime buffers, allocator fragmentation, block metadata, duplication, and implementation details. 
+
+Eight H200s provide 1,128 GB of HBM. Subtracting the approximately 756 GB checkpoint leaves an optimistic 372 GB before runtime allocations. ([Fireworks AI][8])
+
+At the owner/wholesale node price:
+
+```text
+Residency cost per 1M prefix tokens per hour
+= $9.76 × 1.18 × 44.928 / 372
+= $1.391
+```
+
+| Successful cache uses per prefix-hour | Optimistic cached COGS |
+| ------------------------------------: | ---------------------: |
+|                                     5 |               $0.278/M |
+|                                    10 |               $0.139/M |
+|                                    20 |               $0.070/M |
+|                                    50 |               $0.028/M |
+
+Implications:
+
+* **$0.12 cached input** needs approximately twelve or more successful uses per prefix-hour under this lower-bound model.
+* **$0.08** needs approximately eighteen uses.
+* On on-demand H200 capacity, the residency lower bound is $5.217/M-prefix-hour; even twenty uses cost approximately $0.261/M before miss processing and overhead.
+* Caching cannot be priced as a fixed percentage of input independently of prefix size, residency time, hit rate, eviction, and tenant isolation.
+
+### 3.7 Workload distributions
+
+Using the sustained owner-scale costs of:
+
+```text
+Novel input:  $0.159/M
+Cached input: $0.070/M, assuming 20 successful uses/prefix-hour
+Output:       $2.500/M
+```
+
+| Workload distribution                      | Blended modeled COGS per M mixed tokens | Now GM | Priority GM | Standard GM |    Flex GM |
+| ------------------------------------------ | --------------------------------------: | -----: | ----------: | ----------: | ---------: |
+| Long-agent, cold: 8 novel input : 1 output |                                  $0.420 |  75.8% |       56.1% |       41.9% |      24.5% |
+| Cache-rich: 2 novel : 6 cached : 1 output  |                                  $0.360 |  63.1% |       40.9% |       23.3% |  **−5.1%** |
+| Generation-heavy: 1 novel input : 2 output |                                  $1.720 |  49.4% |       23.0% |        6.2% | **−29.0%** |
+
+A blended workload can make a loss-making output rate look acceptable when input dominates. Arcten should maintain separate contribution ledgers for novel input, cache residency, cache misses, and decode.
+
+### 3.8 Minimum node-price requirements
+
+For 20% phase gross margin, 90% utilization, and a 1.20× all-in multiplier, the maximum affordable 8-GPU node price is:
+
+|     Output selling price | Maximum node price/hour |
+| -----------------------: | ----------------------: |
+| $1.109 promotional route |               **$3.61** |
+|               $1.80 Flex |               **$5.85** |
+|           $2.50 Standard |               **$8.13** |
+|         $2.904 GMI route |               **$9.44** |
+|           $3.00 Priority |               **$9.76** |
+|          $3.50 Sail ASAP |              **$11.38** |
+|    $4.40 Now/direct-list |              **$14.31** |
+
+The public owner-H200 proxy is $9.76 per node-hour. Therefore:
+
+* Priority sits directly on the 20%-margin procurement boundary.
+* Standard needs a lower node price, better exact-model throughput, or a lower margin.
+* Flex needs a major B200/kernel gain or unusually cheap otherwise-idle capacity.
+* The approximately $1.11 promotional routes require economics well below the public owner-H200 proxy.
+
+---
+
+## 4. Optimization evidence
+
+The savings ranges below are **engineering underwriting ranges**, not statistical confidence intervals. Public reports generally provide one or a few workload points without repeated-run distributions, power data, or complete fleet overhead.
+
+### 4.1 SGLang serving configuration on 8×H200
+
+**Quality category:** Mathematically equivalent for scheduling and parallelism changes; FP8 KV is lossy relative to BF16 KV. No bitwise guarantee.
+
+**Applicability:** Exact GLM‑5.2-FP8, 8×H200, high-concurrency medium/long prompts.
+
+**Reported results, 8K input / 1K output:**
+
+| Metric                | Plain vLLM baseline |           Optimized |
+| --------------------- | ------------------: | ------------------: |
+| Total throughput      |      5,481.90 tok/s |     17,525.76 tok/s |
+| Output throughput     |        608.31 tok/s |      1,944.77 tok/s |
+| Mean TTFT             |             592.3 s |             143.1 s |
+| P95 TTFT              | Approximately 800 s | Approximately 235 s |
+| Mean TPOT             |           636.24 ms |           217.89 ms |
+| Mean total completion |             651.5 s |             223.1 s |
+| P95 total completion  |             857.9 s |             327.3 s |
+
+The throughput improvement is 219.7%, corresponding to a theoretical 68.7% reduction in GPU cost per mixed token if all other costs and workload behavior remain constant. ([GPU Stack][15])
+
+**Memory/utilization:** `mem-fraction-static=0.85`; actual HBM, SM utilization, memory-bandwidth utilization, power, and CPU usage were not reported.
+
+**Expected savings:** 40–65% on the benchmark’s intended long-context/high-concurrency traffic; 0% or negative on mismatched traffic.
+
+**Difficulty/maturity:** Medium engineering effort; underlying features are upstream and production-capable, but configuration is workload-specific.
+
+**Interactions:** DP attention, DeepEP mode, maximum running requests, chunked prefill, KV dtype, concurrency, context length, and request mix.
+
+**Reproduction core:**
+
+```bash
+--tp-size 8
+--dp-size 8
+--enable-dp-attention
+--moe-a2a-backend deepep
+--mem-fraction-static 0.85
+--max-running-requests 256
+--kv-cache-dtype fp8_e4m3
+```
+
+**Disconfirming evidence:** GPUStack explicitly reports that the same optimized configuration regresses on short ShareGPT-like traffic because DP-attention and DeepEP overhead are not amortized. Its ShareGPT baseline had materially higher output throughput and much lower TTFT than the long-context-optimized configuration. ([GPU Stack][15])
+
+### 4.2 FP8 KV cache
+
+**Quality category:** Lossy relative to BF16 KV; potentially acceptable if FP8 KV is explicitly part of the sold SKU.
+
+**Applicability:** Exact FP8 weights on H200, particularly long-context and KV-bound high-concurrency workloads.
+
+**Reported results:**
+
+* Total throughput: 14,451.05 to 17,525.76 tok/s, **+21.28%**.
+* Mean TPOT: 255.63 to 217.89 ms, **−14.76%**.
+* GSM8K sanity check: 0.975 for BF16 KV and 0.980 for FP8 KV over 200 examples; this is insufficient evidence for long-context distribution preservation. ([GPU Stack][15])
+
+**Memory:** Approximately halves the bytes per KV element relative to BF16, though total runtime memory does not halve.
+
+**Expected savings:** 0–18%. The main gain may appear as higher feasible concurrency or context rather than direct kernel speed.
+
+**Difficulty/maturity:** Low implementation difficulty; mature upstream support. Medium-to-high validation burden.
+
+**Interactions:** Prefix caching, context length, HBM pressure, batch size, P/D disaggregation, and cache offload.
+
+**Reproduction:** `--kv-cache-dtype fp8_e4m3`.
+
+**Disconfirming evidence:** The public quality check is small and arithmetic-focused. Quantization error may accumulate over long contexts, and the performance gain appears primarily in KV-bound regimes.
+
+### 4.3 MTP speculative decoding and IndexShare
+
+**Quality category:**
+
+* Target-verified MTP speculation: distribution-preserving, not bitwise.
+* IndexShare architectural reuse: intended mathematical equivalence.
+* Published highest-throughput GLM‑5.2 stacks generally use NVFP4, which is lossy relative to the FP8 SKU.
+
+**Applicability:** GLM‑5.2 on Blackwell, especially long-context agent traces with high prefix reuse.
+
+**Public results:**
+
+* Baseten attributes part of its 280+ TPS API to MTP, but does not isolate the MTP increment. ([Baseten][9])
+* SGLang’s public work reports approximately 6–11% high-concurrency gain and about 11% end-to-end improvement from the newer speculation path on tested configurations; IndexShare can make draft steps substantially cheaper at long context. ([LMSYS Org][18])
+
+**TTFT/ITL/tail:** Complete isolated distributions were not published for the exact FP8 H200 SKU.
+
+**Memory/utilization:** Public reports provide configuration parameters but not a complete before/after HBM and utilization accounting.
+
+**Expected savings for exact FP8:** 0–12%.
+
+**Difficulty/maturity:** Medium-high. Upstream support exists, but acceptance rate, graph capture, memory allocation, and model-specific draft behavior require tuning.
+
+**Interactions:** Sampling parameters, reasoning mode, context length, batch size, cache hits, CUDA graphs, and target-verification overhead.
+
+**Reproduction:** Pin the exact MTP implementation and compare identical seeds and target logits with speculation disabled and enabled.
+
+**Disconfirming evidence:** Gains depend on draft acceptance. Real customer sampling settings, tool tokens, structured output, and heterogeneous sequence lengths can materially reduce acceptance.
+
+### 4.4 Prefill/decode disaggregation
+
+**Quality category:** Mathematically equivalent if KV transfer and engine configurations preserve the reference computation; MTP remains distribution-preserving. Published Baseten results use lossy NVFP4 weights.
+
+**Applicability:** Large, sustained fleets with materially different prefill and decode demand, enough nodes to avoid fragmentation, and fast KV transfer.
+
+**Reported results:**
+
+* Baseten reports 2× TPS on observed workload shapes from disaggregation.
+* The mechanism uses separate prefill and decode engines, conditional routing, and NIXL-based KV transfer. ([Baseten][9])
+* A separate public vLLM deployment for GLM‑5.2 NVFP4 used 24×B300 in a 4-prefill/1-decode topology and reported mean TTFT at or below 2.5 seconds and TPOT at or below 20 ms over its tested range. ([vLLM][19])
+
+**Memory/utilization:** Public configurations disclose high memory-utilization targets but not complete before/after productive utilization, network utilization, or all-in power.
+
+**Expected exact-FP8 COGS savings:** 0–30%. It can be negative at low load because of capacity fragmentation and transfer overhead.
+
+**Difficulty/maturity:** High. Production maturity is emerging but requires reliable queueing, KV transfer, topology management, and failure recovery.
+
+**Interactions:** Prefix cache, P/D ratio, prompt length after cache hit, NIXL/network topology, TP degree, MTP, CUDA graphs, and admission control.
+
+**Reproduction:** Compare aggregated and P/D configurations at identical aggregate GPU count, arrival traces, context/output distributions, cache-hit rates, and latency objectives.
+
+**Disconfirming evidence:** P/D primarily improves SLO isolation and phase-specific sizing. It does not inherently reduce COGS when the fleet is too small, the phase ratio changes quickly, or decode workers sit idle.
+
+---
+
+## 5. What is already commodity
+
+These should be treated as prerequisites, not moat:
+
+| Capability                                              | Status                                   |
+| ------------------------------------------------------- | ---------------------------------------- |
+| Continuous batching and chunked prefill                 | Standard engine functionality            |
+| Paged KV memory                                         | Standard                                 |
+| Prefix caching                                          | Standard, although policy quality varies |
+| FlashAttention / FlashInfer kernels                     | Standard upstream dependency             |
+| CUDA graphs                                             | Standard                                 |
+| Tensor, pipeline, expert, data, and context parallelism | Standard                                 |
+| DeepEP and MoE collectives                              | Upstream                                 |
+| FP8 weights and FP8 KV support                          | Upstream                                 |
+| MTP/speculative-decoding primitives                     | Upstream and rapidly improving           |
+| P/D disaggregation primitives and NIXL transfer         | Increasingly upstream                    |
+| OpenAI-compatible API                                   | Commodity interface                      |
+| Kubernetes, autoscaling, and spot lifecycle handling    | Commodity infrastructure components      |
+
+Current vLLM releases already include GLM‑5.2-specific changes, KV offload, caching, speculative-decoding, and P/D improvements. Merely enabling them is not defensible differentiation. ([GitHub][16])
+
+---
+
+## 6. What could become proprietary
+
+1. **Cross-window economic scheduler.** Jointly optimize admission, completion-window assignment, preemption, batch formation, failure reserve, and contribution margin rather than merely maximizing tokens per second.
+
+2. **Exactness-aware model registry.** Cryptographically bind checkpoint, tokenizer, context, precision, KV dtype, parser behavior, server image, and evaluation evidence to each sold SKU.
+
+3. **Per-request phase cost ledger.** Attribute novel prefill, cached-prefix residency, cache miss, decode, retry, duplicate execution, interruption loss, and warm-tail cost.
+
+4. **Trace-trained capacity controller.** Predict prefill/decode demand by window and provision separate reliable, interruptible, and off-peak pools.
+
+5. **Interruption-safe execution.** Resume or retry long requests without duplicate customer billing, inconsistent tool state, or uncontrolled repeated prefill.
+
+6. **Cache economics and placement.** Optimize eviction, placement, offload, and routing against expected future reuse rather than generic LRU.
+
+7. **Real-time price floors.** Stop admitting work into a tier when current node price, queue state, predicted reuse, or decode demand makes the request loss-making.
+
+8. **Fleet procurement and provider portfolio.** Durable wholesale access can be more economically important than another low-single-digit kernel improvement.
+
+---
+
+## 7. Three experiments Arcten can run within two weeks
+
+### Experiment 1: Exact FP8 throughput, latency, quality, and COGS Pareto
+
+**Infrastructure**
+
+* 8×H200 and, if accessible, 8×B200.
+* Exact immutable `zai-org/GLM-5.2-FP8` manifest.
+* Original benchmark images: vLLM 0.24.0 and SGLang 0.5.14.
+* Current pinned images: vLLM 0.26.0 and SGLang 0.5.16.
+
+**Matrix**
+
+```text
+Input:       1K, 8K, 32K, 128K, 512K, 1M
+Output:      128, 1K, 8K
+Concurrency: 1, 8, 32, 128, 256, 512
+KV dtype:    BF16, FP8
+MTP:         off, on
+Prefix hit:  0%, 25%, 75%, 95%
+Configs:     TP-only, TP/DP, DeepEP, workload-specific profiles
+```
+
+**Record**
+
+* TTFT, TPOT, ITL, total completion p50/p95/p99.
+* Input and output TPS per node and per GPU.
+* HBM, SM, memory-bandwidth, network, CPU, and power utilization.
+* Startup, model-load, and compilation time.
+* OOMs, crashes, retries, and quality divergence.
+* Logit and output-distribution differences from the reference configuration.
+
+**Decision criterion**
+
+A tier is eligible for a public price only when all-in phase COGS is at most **70% of price** across its intended workload distribution and failure scenario. For Standard output, that means demonstrated COGS at or below **$1.75/M**, not merely $2.50/M.
+
+### Experiment 2: Completion-window scheduler replay
+
+Construct synthetic and partner-derived traces containing:
+
+```text
+low constant load
+correlated bursts
+daily peaks
+sustained saturation
+long-agent serial turns
+short independent requests
+spot interruptions
+node loss during prefill
+node loss during decode
+cold model start
+provider capacity withdrawal
+```
+
+Compare:
+
+* Immediate FIFO.
+* Earliest-deadline-first.
+* Cost-aware batching.
+* Admission control with reliable and interruptible pools.
+* Dynamic price-floor rejection.
+* One-minute, five-minute, and Flex queues.
+
+Measure:
+
+* Productive utilization.
+* Completion-window attainment.
+* Warm-tail hours.
+* Retry and duplicate-compute percentage.
+* Gross margin by token type and customer.
+* Tail completion time.
+* Reliable-capacity reserve required.
+
+**Decision criterion**
+
+Do not launch Priority or Standard unless:
+
+* At least 95% of the intended workload meets the stated **average-objective policy**.
+* Productive utilization exceeds 80% under sustained traffic.
+* Failure and retry reserve remains below 10% of GPU execution cost.
+* Correlated bursts do not force systematic negative-margin fallback.
+
+### Experiment 3: Cache residency and P/D economics
+
+Use a realistic coding-agent trace, such as:
+
+```text
+~80K-token stable prefix
+~220 output tokens/turn
+13 serial turns
+cache-hit rates: 0%, 25%, 50%, 75%, 92%
+inter-turn delay: 1 second, 1 minute, 10 minutes, 1 hour
+```
+
+Compare:
+
+* No cache.
+* Local HBM prefix cache.
+* CPU or remote cache offload.
+* Aggregated inference.
+* P/D disaggregation.
+* Reliable and preemptible workers.
+* Single-tenant and isolated multi-tenant cache policies.
+
+Measure:
+
+* HBM-hours per million cached tokens.
+* Successful reuses per prefix-hour.
+* Transfer and rehydration latency.
+* Eviction and miss rate.
+* Duplicate storage.
+* Cache loss after interruption.
+* TTFT and total trajectory time.
+* Quality under BF16 and FP8 KV.
+
+**Decision criterion**
+
+Offer $0.12 cached pricing only if it remains below 70% COGS at a realistic observed reuse distribution—not a synthetic 92% cache-hit benchmark.
+
+---
+
+## 8. Three-month engineering recommendation
+
+### Weeks 1–2: Measurement and contracting
+
+* Complete the three experiments.
+* Obtain written H200 and B200 wholesale quotes.
+* Establish an immutable exactness manifest.
+* Obtain counsel-reviewed terms for every provider relationship.
+* Do not depend on retail API resale.
+* Exclude credits, free tiers, and launch promotions from the cost ledger.
+
+### Weeks 3–6: Narrow MVP
+
+Launch one exact FP8 model, one region, and one hardware profile.
+
+Products:
+
+* **Now:** private pilot at $1.40/$0.26/$4.40, conditioned on minimum volume or prepaid commitment.
+* **Standard:** asynchronous design-partner pilot, initially priced above the proposed $2.50 output rate.
+* No fixed-price Flex tier yet.
+
+Build:
+
+* OpenAI-compatible endpoint.
+* Immutable model manifest.
+* Per-request phase cost accounting.
+* Admission and price-floor control.
+* Prefix-cache isolation.
+* Queue-aware routing.
+* Explicit cancellation, timeout, and billing semantics.
+
+Use upstream vLLM/SGLang. Do not start custom CUDA work until profiling identifies a stable, material cost center that upstream does not already address.
+
+### Weeks 7–10: Queue and failure system
+
+* Add one reliable pool and one interruptible pool.
+* Implement interruption-aware retry and customer-billing deduplication.
+* Add workload-specific serving profiles rather than one universal configuration.
+* Run fault injection, burst, cold-start, and provider-withdrawal tests.
+* Express one- and five-minute products as average objectives with disclosed variability, not strict per-request deadlines.
+
+### Weeks 11–12: Design-partner production trial
+
+Use two or three customers with:
+
+* Minimum monthly commitments.
+* Known input/output distributions.
+* Explicit context and output caps.
+* Cache-isolation agreements.
+* Average completion objectives.
+* Temporary price floors or workload-specific quotes.
+
+### Recommended initial pricing posture
+
+| Tier         | Recommendation                                                                                            |
+| ------------ | --------------------------------------------------------------------------------------------------------- |
+| **Now**      | Keep $1.40/$0.26/$4.40 only with wholesale/owner-equivalent economics and minimum volume                  |
+| **Priority** | Pilot $0.70/$0.18/$3.00; require workload qualification and commitment                                    |
+| **Standard** | Begin around **$0.50–$0.65 input, $0.12–$0.18 cached, and $2.80–$3.20 output**, or quote per workload     |
+| **Flex**     | Use a dynamic quote or capacity auction; do not fix output at $1.80 until exact B200 evidence supports it |
+
+A public Standard or Flex commitment should require:
+
+```text
+all-in COGS ≤ 70% of rate
+under sustained representative traces
+including warm tail, retries, interruptions,
+orchestration, networking, payment overhead,
+and customer-specific cache behavior
+```
+
+---
+
+## 9. Explicit reasons the approach might fail
+
+1. **Insufficient aggregate demand.** Waiting helps only when enough compatible work accumulates to form efficient batches.
+
+2. **Correlated traffic.** Customer bursts may coincide rather than smooth one another.
+
+3. **Decode remains sequential.** Queueing improves utilization but does not remove the per-output-token memory and synchronization cost.
+
+4. **Output mix is worse than forecast.** Reasoning and coding agents can generate far more output than initial pricing models assume.
+
+5. **Warm-tail cost dominates.** Low-volume model SKUs may require an eight-GPU warm replica whose idle cost overwhelms token revenue.
+
+6. **Spot savings disappear in retries.** Long prefill, compilation, model loading, KV loss, and repeated decode can consume the nominal spot discount.
+
+7. **Reliable fallback is expensive.** A one- or five-minute commitment can require reserved capacity even when most work runs on cheaper capacity.
+
+8. **Strict deadlines destroy the economic benefit.** Sail’s public windows are average targets; a hard deadline requires substantially more reserve.
+
+9. **Cache reuse is overestimated.** Prefixes may differ because of timestamps, tool schemas, retrieved documents, message ordering, or tokenizer changes.
+
+10. **Cache residency is underpriced.** Large long-lived prefixes consume HBM even while no tokens are executing.
+
+11. **Privacy prevents pooling.** Cross-tenant cache reuse may be technically, contractually, or reputationally unacceptable.
+
+12. **FP8 KV changes quality.** Small benchmark parity does not prove long-context or tool-call distribution preservation.
+
+13. **MTP acceptance is low on real traffic.** Tool tokens, JSON constraints, unusual temperatures, and diverse reasoning traces can reduce speculative gains.
+
+14. **P/D fragments a small fleet.** Separate prefill and decode workers can sit idle and increase cost.
+
+15. **Network or KV transfer becomes the bottleneck.** Disaggregation can move the constraint rather than remove it.
+
+16. **The optimal configuration regresses common traffic.** GPUStack’s long-context configuration already demonstrates regression on short ShareGPT-like requests.
+
+17. **Provider interruption is correlated.** Spot or discounted capacity may disappear across regions and suppliers during the same market event.
+
+18. **Procurement disadvantage.** Established providers may have hardware ownership, long-term commitments, or strategic contracts unavailable to Arcten.
+
+19. **Promotional pricing anchors customer expectations.** Competitors may temporarily sell below sustainable COGS.
+
+20. **First-party strategic pricing.** Z.AI or a hyperscaler can rationally price below a standalone inference company’s required margin.
+
+21. **Retail resale rights are unavailable.** A technically viable upstream route may not be legally resellable under Arcten’s branding.
+
+22. **Checkpoint drift breaks exactness.** Silent model, tokenizer, chat-template, kernel, parser, or KV-dtype changes can invalidate the sold SKU.
+
+23. **Customer workloads evade batching.** Incompatible sampling parameters, structured outputs, adapters, context lengths, and latency needs reduce batch compatibility.
+
+24. **Failure accounting is incomplete.** Duplicate prefill, abandoned generations, payment failures, abuse, support, and egress can erase a thin phase margin.
+
+25. **B200 gains do not transfer to exact GLM‑5.2 FP8.** Adjacent-model or NVFP4 benchmark gains may not reproduce on the required checkpoint.
+
+## Final recommendation
+
+Arcten should proceed with the product thesis, but not with the full proposed price curve.
+
+The defensible near-term product is:
+
+* One hash-attested FP8 model.
+* Now plus an asynchronous Standard pilot.
+* Owner-equivalent or negotiated wholesale capacity.
+* Average completion objectives.
+* Workload-qualified pricing.
+* A dynamic economic scheduler and phase-level cost ledger.
+* Gateway BYOK routing where Arcten cannot economically or contractually host the requested route.
+
+The defensible public benchmark is approximately **$1.40 input / $4.40 output**. Approximately **$3.00 output** is a thin owner-scale target. **$2.50** is currently a technical milestone rather than a sustainable list price, and **$1.80** should be treated as an unproven B200/off-peak objective.
+
+[1]: https://recipes.vllm.ai/zai-org/GLM-5.2 "zai-org/GLM-5.2 | vLLM Recipes"
+[2]: https://fireworks.ai/blog/glm-5p2-fast "fireworks.ai"
+[3]: https://docs.sailresearch.com/pricing "Pricing - Sail Research"
+[4]: https://deepinfra.com/zai-org/GLM-5.2/api "zai-org/GLM-5.2 - API Reference - DeepInfra"
+[5]: https://inferencex.semianalysis.com/compare-per-dollar/glm-5-1-b200-vs-h200 "GLM 5/5.1 — B200 vs H200 — Performance per Dollar | InferenceX by SemiAnalysis"
+[6]: https://docs.together.ai/docs/glm-5.2-quickstart "GLM-5.2 quickstart - Together AI docs"
+[7]: https://fireworks.ai/models/fireworks/glm-5p2-fp8 "GLM 5.2 FP8 API & Playground | Fireworks AI"
+[8]: https://fireworks.ai/pricing "Fireworks - Pricing"
+[9]: https://www.baseten.co/blog/how-we-built-the-worlds-fastest-api-for-glm-52/ "How we built the world’s fastest API for GLM-5.2"
+[10]: https://www.streamlake.com/document/WANQING/mdptalisb06i7ai3zdd "产品更新公告-快手万擎(Vanchin)-StreamLake"
+[11]: https://openrouter.ai/docs/faq "OpenRouter FAQ"
+[12]: https://novita.ai/es/models/model-detail/zai-org-glm-5.2 "GLM 5.2 API & Playground | Novita AI"
+[13]: https://www.gmicloud.ai/en/blog/why-glm-52-might-be-the-most-practical-coding-model-available-right-now "GLM-5.2 on GMI Cloud: 1M Context, Open Weights, Zero Integration Overhead"
+[14]: https://huggingface.co/zai-org/GLM-5.2-FP8/tree/main "zai-org/GLM-5.2-FP8 at main"
+[15]: https://docs.gpustack.ai/latest/performance-lab/glm-5.2/h200/ "H200 - GPUStack"
+[16]: https://github.com/vllm-project/vllm/releases "Releases · vllm-project/vllm · GitHub"
+[17]: https://nebius.com/prices "NVIDIA GPU Pricing | Nebius AI Cloud"
+[18]: https://www.lmsys.org/blog/2026-07-13-glm52-optimization "https://www.lmsys.org/blog/2026-07-13-glm52-optimization"
+[19]: https://vllm.ai/blog/2026-07-23-glm-5.2-nvfp4-b300-pd "https://vllm.ai/blog/2026-07-23-glm-5.2-nvfp4-b300-pd"

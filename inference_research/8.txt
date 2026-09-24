@@ -1,0 +1,828 @@
+# Executive conclusion
+
+**Do not publish the four proposed GLM‑5.2 FP8 prices as unconditional SKUs.** They are viable only for a restricted, admission-controlled workload envelope.
+
+The public 8×H200 benchmark supports a strong prefill/batching thesis but not a strong decode-discount thesis. Its throughput-tuned configuration improves balanced, short, and long-prefill workloads by 38–220%, while producing essentially no gain on the 1K-input/2K-output workload and regressing ShareGPT throughput by 53%. ([GPU Stack][1])
+
+Using the lowest public reserved H200 rate found—$2.79/GPU-hour, or $22.32/hour for eight GPUs—a two-anchor decomposition of that benchmark gives approximately:
+
+* **$0.25/M input tokens** in direct, saturated GPU cost.
+* **$4.00/M output tokens** in direct, saturated GPU cost.
+* Under an illustrative 85% productive utilization, 12% infrastructure/failure burden, and 2.9% payment fee: **$5.42/M output break-even** and **$6.83/M output for 20% contribution margin**. ([Hyperstack][2])
+
+That makes the proposed output prices structurally problematic:
+
+| Tier     | Proposed output | Verdict                                                           |
+| -------- | --------------: | ----------------------------------------------------------------- |
+| Now      |         $4.40/M | Above direct GPU cost by only about 9%; below burdened break-even |
+| Priority |         $3.00/M | Below direct saturated output cost                                |
+| Standard |         $2.50/M | Below direct saturated output cost                                |
+| Flex     |         $1.80/M | Less than half the estimated direct output cost                   |
+
+The actual 1K-input/2K-output benchmark request loses money at Priority, Standard, and Flex **before** idle capacity, CPUs, networking, retries, orchestration, payment costs, or failures.
+
+The timing promises are also not generally achievable:
+
+* The 2,000-output-token workload took **93 seconds mean and 103 seconds p99**, despite sub-second TTFT.
+* The 32K-input/100-output workload took **79 seconds p99**.
+* The balanced 8K-input/1K-output workload took **328 seconds p99**, exceeding five minutes.
+* Only the tested short profile—roughly 1K input/128 output—finished under one minute at p99. ([GPU Stack][1])
+
+Therefore:
+
+1. **Waiting can materially discount prefill and improve utilization.**
+2. **Waiting does not automatically make autoregressive decode 30–60% cheaper.**
+3. Output discounts should be much smaller than input discounts unless Arcten measures a different result.
+4. Positive expected contribution margin can be enforced only with bounded request shapes, preauthorization, minimum charges, capacity-aware rejection, capped retries, and supplier price ceilings.
+5. Positive realized contribution margin on every request under every possible failure outcome is impossible at fixed usage-only prices unless customers are charged for failures or prices cover an effectively unbounded failure reserve.
+
+**Recommended decision:** proceed with an admission-controlled closed beta. Do not make binding commitments on the four prices or the one- and five-minute completion windows.
+
+---
+
+# 1. Exact artifact and equivalence contract
+
+## Artifact examined
+
+The current `zai-org/GLM-5.2-FP8` repository is 756 GB, MIT-licensed, has 141 weight shards, and was inspected at commit `ba978f7`. Its configuration declares a 1,048,576-token maximum, BF16 as the general tensor dtype, and dynamic E4M3 FP8 quantization with 128×128 weight blocks. It is therefore a **mixed-precision checkpoint**, not an “everything FP8” runtime. ([Hugging Face][3])
+
+The official vLLM recipe says the FP8 checkpoint fits on one 8×H200/H20 node. It documents full 1M context on 8×B200 using FP8 KV cache; BF16 requires multi-node deployment. ([vLLM Recipes][4])
+
+Eight H100 SXM GPUs provide 640 GB total HBM, below the 756 GB checkpoint size. Eight H200s provide 1,128 GB. Thus the exact checkpoint does not fit in a standard 8×80 GB H100 node without offload, repartitioning across nodes, or further quantization. ([NVIDIA][5])
+
+As of August 1, 2026, current public packages are vLLM 0.26.0 and SGLang 0.5.16. The public H200 benchmark used vLLM 0.24.0 and SGLang 0.5.14, so it must be rerun before making pricing decisions. ([PyPI][6])
+
+## Required `model_contract_id`
+
+Every accepted request should be bound to an immutable contract containing:
+
+* Repository, commit and SHA-256 hash of every model shard.
+* Tokenizer, special tokens, chat template and generation-config hashes.
+* Supported context limit.
+* Weight quantization format and block size.
+* Activation and accumulation arithmetic.
+* KV-cache dtype.
+* Engine, CUDA, NCCL, FlashInfer/attention and kernel image digests.
+* Tensor/data/expert/context parallel topology.
+* Sampling, seed, logprob, reasoning and tool-parser semantics.
+
+At minimum, expose separate contracts for:
+
+1. `GLM-5.2-FP8 / BF16-KV`
+2. `GLM-5.2-FP8 / FP8-KV`
+3. Any reduced-context variant, explicitly named as such
+4. Any FP4/NVFP4/MXFP4 checkpoint, explicitly identified as a different model artifact
+
+Do not silently fail over between these contracts.
+
+## Quality categories
+
+| Category                     | Meaning for Arcten                                                                                                                                                                                                                                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Bitwise identity**         | Exact checkpoint/tokenizer/config hashes. Bitwise-identical generated output also requires the same execution graph, kernel ordering, hardware behavior and sampling implementation; heterogeneous fleet execution generally cannot promise this.                                                                   |
+| **Mathematical equivalence** | Same tensors and nominal computation in exact arithmetic. Parallel reductions, batching and kernels can change floating-point rounding and therefore token choices.                                                                                                                                                 |
+| **Distribution-preserving**  | An algorithm such as properly verified speculative decoding preserves the target sampling distribution, subject to finite-precision/runtime differences. It does not promise the same token sequence or stable logprobs. vLLM explicitly warns that speculative and non-speculative outputs can differ. ([vLLM][7]) |
+| **Lossy approximation**      | Further weight quantization, FP8 KV relative to BF16 KV, cache compression, truncation, approximate speculation, or model substitution.                                                                                                                                                                             |
+
+The official FP8 checkpoint is itself an approximation of its BF16 source, but it is the requested customer artifact. Further reducing it to FP4 is a new lossy transformation and is not equivalent.
+
+---
+
+# 2. Evidence table
+
+| Optimization                                                                                                      | Quality, scope and public result                                                                                                                                                                                                                                                                                      | Latency, memory and utilization                                                                                                                                                                                                                                              | Economics and confidence                                                                                                                                                                                                                                                                             | Production status, reproduction and disconfirming evidence                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Bundled SGLang configuration:** TP8, DP8, DP attention, DeepEP, 256 running requests, 85% static memory, FP8 KV | Mixed. Parallel/scheduler changes are mathematically equivalent in exact arithmetic; FP8 KV is lossy relative to BF16 KV. Exact GLM‑5.2-FP8 on 8×H200. Throughput: balanced 5,482→17,526 tok/s; short 13,197→18,277; long-prefill 10,514→26,433; generation-heavy 2,268→2,267; ShareGPT 6,041→2,845. ([GPU Stack][1]) | Balanced: mean TTFT 143s, p99 TTFT 240s; mean ITL 78ms, p99 217ms; total p99 328s. Generation-heavy: mean/p99 total 93/103s; mean/p99 ITL 46/51ms. Actual GPU SM/tensor utilization, power, complete HBM occupancy and node variance were not reported. ([GPU Stack][1])     | Approximate node-seconds/token reduction: balanced 68.7%; short 27.8%; long 60.2%; generation-heavy ~0%; ShareGPT cost/token **increased 112%**. No repeated-run statistics or confidence intervals were published. Confidence: medium for directional workload dependence; low for production COGS. | Medium-high engineering difficulty; public recipe but workload-specific. Reproduce with the published command and profiles, then rerun on current engines. The authors describe it as a local optimum and explicitly note short conversational regression. ([GPU Stack][1]) |
+| **FP8 KV instead of BF16 KV**                                                                                     | Lossy runtime precision change. On the balanced workload, 14,451→17,526 tok/s, +21.28%; mean TPOT 255.6→217.9ms. A 200-example GSM8K check scored .975 BF16 versus .980 FP8, which is insufficient to establish long-context or distribution equivalence. ([GPU Stack][1])                                            | Roughly halves the main KV element storage, excluding scales, metadata and auxiliary index caches. Benefit was reported for high-concurrency, KV-bound conditions; Hopper defaults to BF16 KV in SGLang. No measured power/utilization or long-context quality distribution. | About 17.5% lower node-seconds/token in the tested balanced case. No CI. Confidence: medium for memory reduction, low for customer-quality equivalence.                                                                                                                                              | Mature implementation but must be a separate precision contract. Reproduce by alternating only `--kv-cache-dtype=bf16` and `fp8_e4m3`, with long-context accuracy tests. Disconfirming evidence: no benefit is established for low-concurrency or short-context traffic.    |
+| **Prefix caching**                                                                                                | Mathematically equivalent in intent when exact KV data and runtime arithmetic are reused. Applies only to byte/token-identical prefixes within the cache identity rules.                                                                                                                                              | Skips prefill computation for the shared prefix. It does not reduce decode computation and offers no benefit on misses. Memory occupancy and eviction can reduce batching headroom. ([vLLM][8])                                                                              | Public documentation provides no GLM‑5.2 throughput, COGS, tail-latency result or CI. Savings range from zero on misses to most shared-prefix prefill cost on hits.                                                                                                                                  | Commodity and production-mature. Reproduce with measured repeated-prefix traces, exact hit attribution and tenant-isolated keys. Disconfirming evidence: low reuse, high churn, private prefixes and output-heavy work.                                                     |
+| **Five-token MTP speculative decoding**                                                                           | Distribution-preserving in algorithmic intent when the target verifier and rejection process are exact; not bitwise, and finite-precision/logprob variation remains. GLM‑5.2 supports up to five draft tokens. ([vLLM Recipes][4])                                                                                    | No public GLM‑5.2 end-to-end throughput, TTFT, ITL, HBM, utilization or acceptance-length distribution was found. Low acceptance can increase overhead or latency.                                                                                                           | Savings unknown. No CI. Confidence: low until measured on Arcten’s actual reasoning, coding and tool-call workloads.                                                                                                                                                                                 | Medium maturity. Reproduce on/off with identical engine builds, prompt traces and seeds; record accepted draft length and verifier cost. Disconfirming evidence: workload-dependent acceptance and logprob instability.                                                     |
+| **Disaggregated prefill/decode**                                                                                  | Mathematically equivalent in intent if KV transfer is exact. Applicable where long prefills interfere with interactive decode.                                                                                                                                                                                        | vLLM describes it as a mechanism to control tail ITL and explicitly states that it does **not** improve throughput. KV movement adds networking, memory and failure complexity. ([vLLM][9])                                                                                  | No intrinsic throughput saving. It may improve SLO efficiency by avoiding decode head-of-line blocking. No GLM‑5.2 COGS result or CI.                                                                                                                                                                | Experimental in vLLM. Reproduce against tuned chunked prefill, measuring transfer time, tail ITL, total completion, failures and extra node count. Disconfirming evidence: transfer overhead and duplicated capacity pools.                                                 |
+| **SGLang LayerSplit/context-parallel prefill**                                                                    | Mathematically equivalent in intent, not necessarily bitwise. Intended for long-context prefill.                                                                                                                                                                                                                      | Documentation reports up to 75% lower per-rank KV memory through sharding over a context-parallel group. No GLM‑5.2 end-to-end throughput, TTFT, ITL, utilization, power or failure data was published. ([SGLang Documentation][10])                                         | COGS savings unknown; memory reduction does not itself imply lower node-seconds. No CI.                                                                                                                                                                                                              | Experimental/advanced. Reproduce at 32K, 128K, 256K and 1M, including all-gather and decode impact. Disconfirming evidence: communication overhead and weak benefit for short inputs.                                                                                       |
+
+The strongest conclusion from the public evidence is not that one configuration is best. It is that **configuration selection must be workload-specific**.
+
+---
+
+# 3. Reproducible calculations
+
+## 3.1 Complete cost equation
+
+For an individual request:
+
+[
+\begin{aligned}
+COGS ={}&
+GPU_{prefill} + GPU_{decode}\
+&+ load/JIT/compilation\
+&+ allocated\ idle\ and\ warm\ tail\
+&+ CPU + RAM + storage + networking\
+&+ orchestration + observability\
+&+ interruption + retry + failure\ reserve\
+&+ provider\ overhead + payment\ overhead
+\end{aligned}
+]
+
+For the scenario calculations below:
+
+[
+GPU_{request}
+=============
+
+\frac{node\ seconds_{request}\times node\ price_{hour}}{3600}
+]
+
+[
+COGS_{request}
+==============
+
+GPU_{request}
+\times
+\frac{infrastructure\ burden}{productive\ utilization}
++
+payment\ fee\times revenue
+]
+
+“Productive utilization” means billable work that survives to settlement, not reported GPU allocation or instantaneous SM utilization.
+
+## 3.2 Direct saturated GPU economics
+
+Inputs are the optimized GPUStack benchmark and a reserved 8×H200 node at $22.32/hour. The benchmark used FP8 KV and therefore gives an optimistic result for a BF16-KV service. ([GPU Stack][1])
+
+| Workload     | Actual input/output | Node-sec/request | Direct GPU cost/request | Now CM | Priority CM | Standard CM |     Flex CM |
+| ------------ | ------------------: | ---------------: | ----------------------: | -----: | ----------: | ----------: | ----------: |
+| Short        |         1,036 / 128 |           0.0653 |               $0.000405 |  79.9% |       63.5% |       51.7% |       37.2% |
+| Balanced     |       8,204 / 1,024 |           0.5394 |               $0.003344 |  79.1% |       62.1% |       49.8% |       34.7% |
+| Long-prefill |        32,012 / 100 |           1.3563 |               $0.008409 |  81.4% |       63.0% |       48.3% |       35.2% |
+| Decode-heavy |       1,012 / 2,000 |           1.3301 |               $0.008246 |  19.3% |  **−22.9%** |  **−49.8%** | **−105.9%** |
+
+These margins include only saturated GPU execution. They exclude every other COGS category.
+
+For the decode-heavy workload, the maximum 8×H200 node price that would break even before overhead is:
+
+| Tier     | Maximum node-hour price |
+| -------- | ----------------------: |
+| Now      |                  $27.65 |
+| Priority |                  $18.16 |
+| Standard |                  $14.90 |
+| Flex     |                  $10.84 |
+
+The cheapest public reserved node used here costs $22.32/hour. Therefore only Now survives direct-GPU break-even on this workload.
+
+## 3.3 Prefill and decode decomposition
+
+Using the long-prefill and decode-heavy measurements, solve:
+
+[
+node\ seconds = \alpha\cdot input\ tokens+\beta\cdot output\ tokens
+]
+
+Result:
+
+* (\alpha=4.0355\times10^{-5}) node-seconds/input token
+* (\beta=6.4461\times10^{-4}) node-seconds/output token
+* Equivalent isolated phase rates: approximately 24,780 input tok/s and 1,551 output tok/s
+
+| Supply price                              | Direct input cost/M | Direct output cost/M |
+| ----------------------------------------- | ------------------: | -------------------: |
+| Reserved H200: $22.32/node-hour           |              $0.250 |               $3.997 |
+| On-demand H200: $31.92/node-hour          |              $0.358 |               $5.716 |
+| AWS Capacity Block H200: $47.76/node-hour |              $0.535 |               $8.552 |
+
+Hyperstack currently lists $2.79/H200-hour reserved and $3.99 on demand. AWS lists an eight-H200 `p5e.48xlarge` Capacity Block at $47.76/hour. ([Hyperstack][2])
+
+This is a **shape-sensitivity model, not a statistical fit**. It overpredicts the short and balanced measurements because batching and prefill/decode interactions are nonlinear. The actual decode-heavy request economics above are the more direct evidence.
+
+## 3.4 Burdened sustained floor
+
+Illustrative assumptions:
+
+* Reserved node: $22.32/hour
+* Productive utilization: 85%
+* CPU, RAM, storage, networking, orchestration and failure burden: 1.12× GPU execution
+* Card variable fee: 2.9%
+* Fixed $0.30 fee eliminated through prepaid balances
+
+Stripe currently lists 2.9% plus $0.30 for domestic card payments. ([Stripe][11])
+
+| Phase  | Pre-payment compute floor | Break-even list price | List price for 20% CM |
+| ------ | ------------------------: | --------------------: | --------------------: |
+| Input  |                  $0.330/M |              $0.340/M |              $0.428/M |
+| Output |                  $5.266/M |              $5.423/M |              $6.830/M |
+
+Implications:
+
+* Proposed input prices may work under sustained prompt-heavy load.
+* Flex input at $0.40/M is below this illustrative 20% margin floor.
+* Every proposed output price is below the 20% floor.
+* Now output at $4.40/M is below even the illustrative break-even floor.
+
+## 3.5 Low-load, burst, sustained and failure scenarios
+
+Assumptions:
+
+| Scenario             | Node price | Productive utilization | Infrastructure/failure burden |
+| -------------------- | ---------: | ---------------------: | ----------------------------: |
+| Sustained contracted |   $22.32/h |                    85% |                         1.12× |
+| Burst on-demand      |   $31.92/h |                    65% |                         1.15× |
+| Low-load warm pool   |   $22.32/h |                    15% |                         1.12× |
+| Failure/fallback     |   $47.76/h |                    55% |                         1.30× |
+
+Resulting contribution margins after the 2.9% variable payment fee:
+
+| Scenario/workload               |         Now |    Priority |      Standard |          Flex |
+| ------------------------------- | ----------: | ----------: | ------------: | ------------: |
+| Sustained — balanced            |       69.5% |       47.1% |         31.0% |         11.1% |
+| Sustained — decode-heavy        |   **−9.3%** |  **−64.9%** |   **−100.2%** |   **−174.2%** |
+| Burst — balanced                |       44.2% |        1.1% |    **−29.9%** |    **−68.0%** |
+| Burst — decode-heavy            | **−107.1%** | **−213.9%** |   **−281.8%** |   **−423.9%** |
+| Low-load — balanced             |  **−59.0%** | **−186.2%** |   **−277.7%** |   **−390.1%** |
+| Low-load — decode-heavy         | **−505.6%** | **−820.7%** | **−1,021.2%** | **−1,440.4%** |
+| Failure/fallback — balanced     |   **−8.7%** |  **−94.8%** |   **−156.8%** |   **−232.9%** |
+| Failure/fallback — decode-heavy | **−311.1%** | **−524.6%** |   **−660.4%** |   **−944.3%** |
+
+This is why fixed prices and unconditional acceptance are incompatible. At low demand, one tiny request can inherit a material fraction of an entire warm node-hour.
+
+## 3.6 Cached-input economics
+
+An architecture-derived lower bound for BF16 MLA KV storage is:
+
+[
+78\ layers\times(512+64)\ values\times2\ bytes
+==============================================
+
+89{,}856\ bytes/token
+]
+
+The model configuration supplies the 78 layers, 512 KV latent rank and 64-dimensional RoPE component. Actual storage can be higher because of scales, alignment, allocator fragmentation, MTP state and sparse-attention index structures. ([Hugging Face][12])
+
+On 8×H200:
+
+* Raw HBM after a 756 GB model image: approximately 372 GB, or 4.14M BF16 cached tokens.
+* At an 85% static-memory budget: approximately 203 GB, or 2.26M BF16 cached tokens.
+* At $22.32/node-hour, HBM opportunity cost is roughly **$5.39–$9.89 per million cached-token-hours**.
+
+Capacity-only cached-input break-even therefore depends on reuse:
+
+| Charged cached-input price | Required uses per retained prefix per hour |
+| -------------------------- | -----------------------------------------: |
+| $0.26/M                    |                                      21–38 |
+| $0.18/M                    |                                      30–55 |
+| $0.12/M                    |                                      45–82 |
+| $0.08/M                    |                                     67–124 |
+
+This excludes lookup, orchestration, eviction, privacy isolation and payment costs.
+
+Required policy:
+
+* Charge cached-input rates only on an **actual hit**.
+* Price retention separately if customers require guaranteed residency.
+* Default to tenant-isolated caches.
+* Treat FP8 KV as a separate lossy precision contract; it roughly halves the main KV storage, but requires separate quality validation.
+* Do not assume cached prefixes reduce output costs.
+
+## 3.7 Cold starts and scale-to-zero
+
+A 756 GB artifact has a theoretical transfer lower bound of:
+
+* About **60 seconds at 100 Gb/s**
+* About **242 seconds at 25 Gb/s**
+
+That excludes instance allocation, image startup, filesystem mounting, deserialization, HBM transfer, process initialization and kernel compilation. The vLLM recipe notes that skipping DeepGEMM warmup causes initial requests to compile kernels on demand. ([Hugging Face][3])
+
+Consequences:
+
+* True GPU scale-to-zero is incompatible with a one-minute completion promise.
+* It might be usable for Flex.
+* It could become usable for Standard only after a provider-specific cold-start distribution is measured.
+* Local NVMe weight copies and precompiled kernels reduce startup time but do not remove GPU allocation risk.
+
+One continuously reserved 8×H200 node costs about **$16,070/month at 720 hours**, before ancillary infrastructure. A two-failure-domain minimum is about $32,141/month.
+
+## 3.8 Million-request lower bounds
+
+Using the measured benchmark durations, the approximate minimum node counts for one million simultaneously arriving requests are:
+
+| Profile      | Requests/node/minute | Nodes for 1M in 1 minute | Nodes for 1M in 5 minutes |
+| ------------ | -------------------: | -----------------------: | ------------------------: |
+| Short        |                  918 |                    1,090 |                       218 |
+| Balanced     |                  111 |                    8,990 |                     1,798 |
+| Long-prefill |                   44 |                   22,605 |                     4,521 |
+| Decode-heavy |                   45 |                   22,168 |                     4,434 |
+
+These are throughput lower bounds. They ignore headroom, p99 tails, node failures, capacity fragmentation and regional redundancy.
+
+## 3.9 Current market comparison
+
+| Service     | Precision/context disclosed                                                                    |                                                                                     Current public price/M | Equivalent to requested contract? |
+| ----------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------: | --------------------------------- |
+| Z.ai direct | Hosted runtime precision is not specified as the exact open checkpoint contract                |                       $1.40 input / $0.26 cached / $4.40 output ([Overview - Z.AI DEVELOPER DOCUMENT][13]) | Unproven                          |
+| DeepInfra   | FP4, 1,048,576 context                                                                         |                                       $0.75 / $0.14 / $2.40; Flex $0.60 / $0.112 / $1.92 ([DeepInfra][14]) | **No: FP4**                       |
+| Together    | FP4, 262K context                                                                              |                                                             $1.40 / $0.26 / $4.40 ([Together AI docs][15]) | **No: FP4 and lower context**     |
+| GMI         | Advertises model ID `zai-org/GLM-5.2-FP8`; a live catalog view displays roughly $2.90/M output | Runtime hashes, KV precision and complete context contract are not publicly established. ([GMI Cloud][16]) | Label match only                  |
+
+The GMI price is disconfirming evidence against treating the H200 estimate as a universal market floor. Possible explanations include better hardware, better supplier contracts, traffic cross-subsidy, different runtime precision/context limits, promotional pricing, or a loss leader. Arcten cannot assume any of them without conformance tests and a binding supply agreement.
+
+## 3.10 Calculation code
+
+```python
+from __future__ import annotations
+
+workloads = {
+    # name: (input_tokens, output_tokens, benchmark_duration_s, requests)
+    "short": (1036, 128, 65.34, 1000),
+    "balanced": (8204, 1024, 539.39, 1000),
+    "long_prefill": (32012, 100, 135.63, 100),
+    "decode_heavy": (1012, 2000, 266.01, 200),
+}
+
+tiers = {
+    # input and output dollars per million tokens
+    "now": (1.40, 4.40),
+    "priority": (0.70, 3.00),
+    "standard": (0.50, 2.50),
+    "flex": (0.40, 1.80),
+}
+
+reserved_node_hour = 8 * 2.79
+payment_fee = 0.029
+
+for name, (inp, out, duration, requests) in workloads.items():
+    node_seconds = duration / requests
+    direct_gpu = node_seconds * reserved_node_hour / 3600
+
+    print(f"\n{name}: direct GPU/request = ${direct_gpu:.8f}")
+    for tier, (pin, pout) in tiers.items():
+        revenue = (inp * pin + out * pout) / 1_000_000
+        margin = (revenue - direct_gpu) / revenue
+        print(f"  {tier:8s}: revenue=${revenue:.8f}, direct CM={margin:.1%}")
+
+# Solve node_seconds = alpha * input + beta * output
+p1, o1, d1, n1 = workloads["long_prefill"]
+p2, o2, d2, n2 = workloads["decode_heavy"]
+s1, s2 = d1 / n1, d2 / n2
+
+det = p1 * o2 - p2 * o1
+alpha = (s1 * o2 - s2 * o1) / det
+beta = (p1 * s2 - p2 * s1) / det
+
+print("\nnode-seconds/input token:", alpha)
+print("node-seconds/output token:", beta)
+
+for node_rate in (22.32, 31.92, 47.76):
+    input_cost_m = alpha * node_rate / 3600 * 1_000_000
+    output_cost_m = beta * node_rate / 3600 * 1_000_000
+    print(node_rate, input_cost_m, output_cost_m)
+
+# Illustrative full-COGS scenarios
+scenarios = {
+    # node price, productive utilization, non-payment burden
+    "sustained": (22.32, 0.85, 1.12),
+    "burst": (31.92, 0.65, 1.15),
+    "low_load": (22.32, 0.15, 1.12),
+    "failure": (47.76, 0.55, 1.30),
+}
+
+for scenario, (node_rate, utilization, burden) in scenarios.items():
+    print(f"\n{scenario}")
+    for name, (inp, out, duration, requests) in workloads.items():
+        base = (
+            (duration / requests)
+            * node_rate
+            / 3600
+            * burden
+            / utilization
+        )
+        for tier, (pin, pout) in tiers.items():
+            revenue = (inp * pin + out * pout) / 1_000_000
+            cogs = base + payment_fee * revenue
+            cm = (revenue - cogs) / revenue
+            print(name, tier, f"{cm:.1%}")
+```
+
+---
+
+# 4. Operating model from zero to millions
+
+## Demand-regime policy
+
+| Regime                    | Rational operating policy                                                                                                                                                                                                                         |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Zero local requests**   | Keep only the control plane, queue, ledger and supplier inventory live. Accept Flex. Route through an exact, contractually permitted OEM route or customer BYOK account where available. Reject Now/Priority unless a warm capacity token exists. |
+| **Isolated request**      | Route to an already-warm exact-contract cell. Never start an 8×H200 node for a small usage-only Now request. Require a minimum request charge, deadline-reservation fee or customer volume commitment.                                            |
+| **Low intermittent load** | One shared warm cell only when expected gross profit covers its full warm-tail cost. Pool across compatible tenants while maintaining data and cache isolation. Keep Flex queued rather than creating capacity.                                   |
+| **Burst**                 | Use contracted on-demand spillover only while the admission test remains positive. Queue Flex, restrict Standard, and reject or dynamically quote Now/Priority when the exact pool is exhausted.                                                  |
+| **Sustained load**        | Reserve the measured base load, maintain explicit SLO headroom, and use on-demand only for forecast error. Partition latency traffic from throughput traffic.                                                                                     |
+| **Millions concurrent**   | Hierarchical global broker, regional model-contract cells, work-unit rather than request-count capacity accounting, regional backpressure, multiple suppliers and binding capacity reservations.                                                  |
+
+## Core control plane
+
+### 1. Immutable exact-contract cells
+
+A serving cell contains exactly one approved `model_contract_id`. Requests can move only among conforming cells. A fallback that changes checkpoint, tokenizer, context cap, weight precision or KV precision is a failed request unless the customer explicitly authorized the alternative.
+
+### 2. Work estimator
+
+Admission must estimate work from:
+
+[
+work =
+\alpha\cdot uncached_prompt
++
+\beta(context,\ concurrency)\cdot max_output
++
+cache\ occupancy
++
+uncertainty
+]
+
+Use `max_tokens`, not expected output, for deadline and capacity reservation.
+
+Output cost must be conditioned on existing context length. Generating token 100 after a 1K context is not economically equivalent to generating token 100 after a 500K context.
+
+### 3. Admission invariant
+
+For target contribution margin (m), variable payment fee (f), and selected cost percentile (q):
+
+[
+accept \iff
+\begin{cases}
+exact\ capacity\ exists\
+P(T_{finish}\le deadline\mid state)\ge SLO\
+authorized\ revenue\cdot(1-f-m)
+\ge
+Q_q(nonpayment\ COGS)\
+customer\ balance\ is\ sufficient
+\end{cases}
+]
+
+`nonpayment COGS` must include:
+
+* Predicted prefill and decode
+* Warm-tail allocation
+* Retry probability
+* Current supplier price
+* Failure-domain reserve
+* Context/KV occupancy
+* Orchestration and transfer overhead
+
+When this inequality fails, the system must reject, delay, quote a higher price or use an exact authorized alternative. It must not accept and hope that unrelated prompt-heavy jobs subsidize the request.
+
+## Tier semantics
+
+| Tier                    | Required implementation                                                                                                                                                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Now**                 | Warm reserved/on-demand exact cells only. No spot. Define TTFT and ITL SLOs separately; final completion cannot be promised without output caps.                                                                        |
+| **Priority ~1 minute**  | Still requires warm capacity. Eligibility must be limited by prompt length, existing context, `max_tokens`, reasoning mode, tools and streaming behavior. The public 32K-prefill and 2K-output profiles are ineligible. |
+| **Standard ~5 minutes** | Can use warm slack and controlled queues. Cold starts are permitted only after provider-specific p99 startup is proven. The public balanced configuration already exceeds five minutes at p99 under saturation.         |
+| **Flex**                | Off-peak queueing, opportunistic batching, spot and scale-to-zero eligible. No hard completion guarantee. Still accept only when expected margin is positive.                                                           |
+
+Define completion time as **admission to final token**, not an average queue target. Return:
+
+* `accepted_at`
+* `latest_finish_at`
+* `model_contract_id`
+* `precision_contract`
+* whether the target is guaranteed or best effort
+
+## Prepaid billing
+
+At admission:
+
+1. Tokenize and perform cache lookup.
+2. Estimate the maximum charge and capacity reservation.
+3. Authorize against the prepaid balance.
+4. Reserve a minimum deadline fee where relevant.
+5. Settle actual token usage subject to that minimum.
+6. Use an exactly-once ledger keyed by logical request ID.
+
+A usage-only settlement cannot recover the opportunity cost of reserving capacity for a large `max_tokens` value when the request produces only a few tokens. Strict-deadline tiers therefore need a minimum charge or reservation component.
+
+Card top-up economics using 2.9% plus $0.30:
+
+| Top-up | Payment cost | Effective rate |
+| ------ | -----------: | -------------: |
+| $5     |       $0.445 |           8.9% |
+| $20    |       $0.880 |           4.4% |
+| $100   |       $3.200 |           3.2% |
+
+Use a $20–$50 minimum card top-up and invoice/bank payment for material enterprise volume.
+
+## Preemptions and retries
+
+AWS Spot notices are best effort and normally provide two minutes; GCP’s default best-effort shutdown window is 30 seconds. Neither is a sufficient basis for migrating arbitrary large KV state or protecting a strict live decode SLO. ([AWS Documentation][17])
+
+Policy:
+
+* Use spot only for Flex and preferably non-streaming work.
+* On notice, stop new admissions immediately.
+* Persist queue metadata, prompt tokens, generated-prefix tokens, accounting state and deterministic RNG state.
+* Resume by recomputing KV on the replacement cell when economically and temporally feasible.
+* Cap attempts.
+* Record empirical interruption and retry cost by supplier and region.
+* Refund or fail after the cap; never retry indefinitely.
+* Do not transparently restart a streamed response after tokens have been emitted unless the protocol explicitly supports discontinuity.
+
+## Duplicate suppression
+
+The idempotency fingerprint should include:
+
+* Customer and logical request ID
+* Model contract
+* Prompt/messages
+* Tools and schemas
+* Generation parameters
+* Seed
+* Reasoning mode
+* Context/cache identity
+
+Rules:
+
+* Single-flight only retries of the same logical request.
+* Do not merge two independent stochastic calls merely because their request bytes match.
+* Bill once per logical request, not once per execution attempt.
+* Store final responses for a bounded replay period.
+* Use fencing tokens when ownership moves between cells.
+
+## Capacity shortages
+
+When exact capacity is unavailable:
+
+1. Reject before acceptance with `retry_after`.
+2. Queue Flex.
+3. Offer a higher, explicitly accepted price.
+4. Route through a customer BYOK account in Gateway.
+5. Use a signed OEM/wholesale route conforming to the same contract.
+6. Never substitute a different model or precision automatically.
+
+## Legal route distinctions
+
+The open checkpoint is MIT-licensed, supporting commercial self-hosting. Z.ai’s API terms expressly permit integrating the API into applications and downstream systems for end users, but that language does not clearly establish a right to resell a raw white-label inference API. Obtain signed OEM/wholesale authorization before treating retail API capacity as Arcten Inference supply. ([Hugging Face][3])
+
+| Route                    | Commercial structure                                            |
+| ------------------------ | --------------------------------------------------------------- |
+| Self-hosted open weights | Arcten operates the exact checkpoint under its open license     |
+| BYOK                     | Customer contracts and pays the provider; Arcten Gateway routes |
+| OEM/wholesale            | Provider contract expressly permits Arcten resale               |
+| Retail pass-through      | Do not assume permitted                                         |
+| Model substitution       | Only with explicit customer authorization                       |
+
+## Can every accepted request have positive contribution margin?
+
+### Unconditional fixed prices
+
+**No.** This is impossible with:
+
+* Arbitrary context and output lengths
+* Unconditional acceptance
+* Usage-only billing
+* Warm availability from zero load
+* Unbounded retries or failure liability
+* Supplier prices that can change
+* Fixed card fees on tiny transactions
+
+### Conditional fixed prices
+
+Positive **expected** margin can be enforced when all of these hold:
+
+* Published prices are segmented by context/output/deadline class.
+* Request shape is bounded.
+* Supplier price is contractually capped.
+* Exact capacity is available.
+* `max_tokens` is reserved.
+* A request/deadline minimum charge applies.
+* Payment is preauthorized.
+* Retries and liability are capped.
+* Arcten may reject requests.
+
+Positive **realized** margin under every failure outcome remains impossible unless failure attempts are billable or the price includes the worst conceivable loss. The appropriate operating target is positive margin at a chosen conservative cost percentile plus a pooled failure reserve.
+
+## Required commercial actions
+
+| Condition                                          | Required response                            |
+| -------------------------------------------------- | -------------------------------------------- |
+| Long output, long existing context, deep reasoning | Higher output/context price or reject        |
+| Full 1M context                                    | Separate B200 or multi-node SKU and price    |
+| BF16 KV requirement                                | Separate, more expensive SKU                 |
+| Strict p99 Now/Priority                            | Reservation/minimum charge and warm capacity |
+| Dedicated tenant or region                         | Minimum monthly commitment                   |
+| Multi-region availability                          | Minimum commitment plus supplier reservation |
+| No exact warm capacity                             | Reject, queue or explicit quote              |
+| Supplier fallback above price ceiling              | Reject or reprice                            |
+| Retail provider route                              | Signed OEM/wholesale agreement               |
+| Guaranteed cache retention                         | Storage-time charge and minimum volume       |
+
+---
+
+# 5. What is already commodity
+
+The following are table stakes, not a defensible thesis by themselves:
+
+* OpenAI-compatible request and streaming APIs
+* Continuous batching
+* Paged KV memory
+* Chunked prefill
+* FlashAttention/FlashInfer-class kernels
+* CUDA graphs
+* Tensor, data, expert and multi-node parallelism
+* Automatic prefix caching
+* Radix/prefix-tree cache lookup
+* Standard speculative-decoding frameworks
+* Disaggregated prefill primitives
+* Kubernetes-style orchestration, metrics and autoscaling
+
+vLLM publicly exposes continuous batching, PagedAttention, prefix caching and disaggregated prefill; SGLang exposes corresponding high-throughput serving mechanisms. ([PyPI][18])
+
+“Requests that can wait are batched” is not sufficient differentiation.
+
+# 6. What could become proprietary
+
+| Area                                         | Potential defensibility                                                                                                      |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Online cost model**                        | Per-model, per-context, per-engine prediction of prefill, decode, memory occupancy, completion distribution and failure cost |
+| **Margin/deadline scheduler**                | Joint scheduling by slack, predicted cost, cache locality, supplier price and contribution margin                            |
+| **Exact-artifact fleet broker**              | Multi-provider routing that proves checkpoint/tokenizer/precision conformance before routing                                 |
+| **Workload-specific configuration selector** | Automatically choose engine/topology/configuration by request distribution rather than using one global “optimized” setup    |
+| **Cache placement and reuse forecasting**    | Decide which prefixes to retain, where to place them and whether expected reuse justifies HBM residency                      |
+| **GLM-specific serving work**                | Demonstrated improvements to DSA/IndexShare, MTP acceptance, expert communication, context parallelism and kernel fusion     |
+| **Preemption-aware execution**               | Retry, reconstruction, deduplication and accounting that minimize wasted compute without violating stochastic semantics      |
+| **Capacity portfolio**                       | Contracting and dispatch across providers based on real marginal cost, not headline GPU price                                |
+| **Conformance corpus**                       | Golden greedy traces, stochastic distribution tests, long-context tests, tool/parser tests and upgrade gates                 |
+
+The moat is the **control plane plus validated model-specific execution**, not the engine flags.
+
+---
+
+# 7. Three experiments Arcten can run within two weeks
+
+## Experiment 1 — Exact-artifact performance and quality matrix
+
+**Purpose:** establish the real cost surface.
+
+Configuration:
+
+* Pin `zai-org/GLM-5.2-FP8` commit `ba978f7`.
+* Test current vLLM 0.26.0 and SGLang 0.5.16.
+* 8×H200.
+* BF16 KV as the primary fidelity baseline.
+* FP8 KV as a separate lossy contract.
+* Contexts: 8K, 32K, 128K, 256K and the maximum that fits; test 1M on B200 if available.
+* Shapes: short, balanced, long-prefill, output-heavy, repeated-prefix, ShareGPT-like and real coding-agent traces.
+* Concurrency: 1, 4, 16, 64, 128, 256, 512.
+* Arrival patterns: isolated, Poisson, synchronized burst and sustained saturation.
+
+Measure:
+
+* Input, output and total tokens/second
+* Queue time, TTFT, ITL, TPOT and completion p50/p95/p99
+* SM/tensor utilization, HBM, NVLink, CPU, RAM, networking and power
+* MTP draft acceptance
+* Prefix-cache hit/reuse
+* Failures and OOMs
+* Greedy token conformance
+* Stochastic distribution divergence
+* Long-context retrieval, perplexity/task quality and tool-call correctness
+
+Run at least five repeats and report bootstrap 95% intervals.
+
+**Gate:** do not offer Priority unless p99 completion is below 60 seconds with at least 20% capacity headroom for the exact eligible shape. Apply the analogous 300-second gate to Standard.
+
+## Experiment 2 — Deadline, margin and cache scheduler replay
+
+**Purpose:** determine whether waiting creates economically meaningful savings beyond an already tuned engine.
+
+Build a trace-driven simulator plus small live replay comparing:
+
+* FCFS
+* Earliest deadline first
+* Least slack first
+* Cache-locality scheduling
+* Margin-aware admission and scheduling
+
+Include:
+
+* All four tiers
+* Repeated prefixes
+* Low load, burst and sustained demand
+* Output-length estimation error
+* Supplier slowdown
+* Node loss and preemption
+* Duplicate retries
+* Capacity shortages
+
+Measure:
+
+* Deadline miss rate
+* GPU-hours
+* Productive utilization
+* Warm-tail cost
+* Cache residency and hit rate
+* Contribution-margin distribution
+* Rejection rate
+* Retry and duplicate cost
+* Customer completion-time distribution
+
+**Gate:** the deferred scheduler must reduce fully burdened COGS, not merely increase aggregate tokens/second.
+
+## Experiment 3 — Supplier, cold-start and failover characterization
+
+**Purpose:** establish the real capacity portfolio.
+
+For at least three suppliers:
+
+* Request binding H200/B200 quotes and capacity ceilings.
+* Bake container images, local artifacts and compilation caches.
+* Measure allocation, boot, mount, model-load, HBM-load, JIT and ready-to-serve times separately.
+* Test warm restart, cold restart, regional failover and node replacement.
+* Inject spot/preemption events.
+* Run exact-contract conformance after every restart.
+* Measure duplicate suppression and exactly-once settlement.
+
+Use cloud credits for the experiments only. Recalculate production COGS from unsubsidized contractual rates.
+
+**Gate:** no Now/Priority commitment until there is a fixed capacity-price ceiling, measured startup/failure distribution and at least two failure domains.
+
+---
+
+# 8. Three-month engineering recommendation
+
+| Period         | Deliverables                                                                                                                                                                       |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Weeks 1–4**  | Immutable model contracts; conformance suite; benchmark harness; per-request prefill/decode/HBM telemetry; current-engine comparison; supplier quote collection                    |
+| **Weeks 5–8**  | Prepaid ledger; idempotency and fencing; max-token reservation; work estimator; deadline/margin admission; warm-cell inventory; trace simulator; capped retry controller           |
+| **Weeks 9–12** | Limited paid pilot; one or two exact contracts; bounded context/output classes; revised pricing; one reserved supplier plus one failure-domain supplier; production SLO dashboards |
+
+## Initial product shape
+
+1. **Pilot Now and Flex only.**
+2. Hold Priority and Standard until the p99 experiment gates pass.
+3. Use revised or shape-banded output prices. Under the illustrative sustained model, $5.4/M is approximately break-even and $6.8/M supports 20% CM for output-heavy traffic.
+4. Apply a minimum request/deadline charge.
+5. Bill cached-input pricing only on verified hits.
+6. Make full 1M context a separate premium contract.
+7. Expose BF16 KV and FP8 KV as separate precision contracts.
+8. Reject requests when predicted margin or deadline feasibility fails.
+9. Do not use spot for Now or live Priority decode.
+10. Treat Gateway/BYOK as the zero-demand and shortage hedge, not as hidden retail API resale.
+
+A rational price structure is:
+
+[
+charge =
+uncached\ input
++
+actual\ cache\ hits
++
+context\text{-}banded\ output
++
+deadline\ reservation
++
+optional\ cache\ retention
+]
+
+A flat output price independent of context length, deadline and reserved `max_tokens` should not be the long-term design.
+
+---
+
+# 9. Explicit reasons the approach might fail
+
+1. **Decode remains serial and expensive.** Waiting materially improves batching and prefill but may not reduce output COGS enough to support the proposed discounts.
+2. **Adverse selection.** The cheapest tiers attract the longest, least urgent and most output-heavy jobs—the requests with the worst economics.
+3. **Low-load warm-tail cost.** Early demand may be insufficient to amortize even one $16K/month H200 node.
+4. **The engine optimizations are commodity.** Competitors can use the same vLLM, SGLang, FlashInfer and CUDA capabilities.
+5. **One tuned configuration does not generalize.** The public “optimized” configuration regressed ShareGPT throughput by 53% and more than doubled its cost per token.
+6. **Exactness removes cheap escape routes.** FP4, model substitution, reduced context and silent FP8 KV are unavailable without explicit customer consent.
+7. **Full context is materially harder.** The official recipe uses B200 plus FP8 KV for 1M; BF16 KV requires a more expensive deployment.
+8. **Cold starts defeat short deadlines.** The checkpoint transfer alone can consume or exceed a one-minute window.
+9. **Spot is poorly matched to live decode.** Interruption notices do not guarantee enough time to preserve large in-flight state.
+10. **Cache reuse may be insufficient.** The proposed cache prices require high reuse per retained prefix and may be incompatible with tenant isolation.
+11. **Supplier capacity can disappear.** Published GPU prices do not imply thousands of exact nodes are available during a demand spike.
+12. **Fallback capacity can destroy margin.** AWS-like H200 fallback prices make even balanced traffic negative at most proposed tiers.
+13. **Failures create unbounded tail loss.** Repeated execution, partial streaming and refunds can make an individual request deeply negative.
+14. **Payment overhead dominates micro-usage.** Without prepaid minimums, a $0.30 fixed fee exceeds the revenue from many requests.
+15. **Retail API resale may not be permitted.** Integration rights are not the same as wholesale or white-label resale rights.
+16. **Competitors may have a structural supply advantage.** Exact-label FP8 services below Arcten’s modeled H200 cost may reflect superior hardware, contracts or vertical integration.
+17. **Current evidence is weak.** The main public benchmark is one hardware topology, older software, no repetitions, no confidence intervals, no power measurements and no complete utilization data.
+18. **Customer expectations may conflict with admission control.** A fixed-price API that frequently returns capacity rejections may be commercially unattractive.
+19. **Average completion targets can mask poor tails.** Customers will experience p95/p99 behavior, not fleet averages.
+20. **A global fleet controller is difficult.** Exact-contract placement, cache locality, supplier failures, price changes and deadline scheduling interact nonlinearly.
+
+**Final recommendation:** continue only as a bounded, instrumented pilot. The input-side thesis is credible. The proposed output discounts, universal one-/five-minute windows, scale-to-zero Now service and unconditional fixed-price acceptance are not supported by the current evidence.
+
+[1]: https://docs.gpustack.ai/latest/performance-lab/glm-5.2/h200/ "https://docs.gpustack.ai/latest/performance-lab/glm-5.2/h200/"
+[2]: https://www.hyperstack.cloud/gpu-pricing "https://www.hyperstack.cloud/gpu-pricing"
+[3]: https://huggingface.co/zai-org/GLM-5.2-FP8/tree/main "https://huggingface.co/zai-org/GLM-5.2-FP8/tree/main"
+[4]: https://recipes.vllm.ai/zai-org/GLM-5.2 "zai-org/GLM-5.2 | vLLM Recipes"
+[5]: https://www.nvidia.com/en-us/data-center/h200/ "https://www.nvidia.com/en-us/data-center/h200/"
+[6]: https://pypi.org/project/vllm/ "https://pypi.org/project/vllm/"
+[7]: https://docs.vllm.ai/en/latest/features/speculative_decoding/ "https://docs.vllm.ai/en/latest/features/speculative_decoding/"
+[8]: https://docs.vllm.ai/en/latest/features/automatic_prefix_caching/ "https://docs.vllm.ai/en/latest/features/automatic_prefix_caching/"
+[9]: https://docs.vllm.ai/en/stable/features/disagg_prefill/ "https://docs.vllm.ai/en/stable/features/disagg_prefill/"
+[10]: https://lmsysorg.mintlify.app/cookbook/autoregressive/GLM/GLM-5.2 "https://lmsysorg.mintlify.app/cookbook/autoregressive/GLM/GLM-5.2"
+[11]: https://stripe.com/pricing "https://stripe.com/pricing"
+[12]: https://huggingface.co/zai-org/GLM-5.2-FP8/raw/main/config.json "https://huggingface.co/zai-org/GLM-5.2-FP8/raw/main/config.json"
+[13]: https://docs.z.ai/guides/overview/pricing "https://docs.z.ai/guides/overview/pricing"
+[14]: https://deepinfra.com/zai-org/GLM-5.2 "https://deepinfra.com/zai-org/GLM-5.2"
+[15]: https://docs.together.ai/docs/glm-5.2-quickstart "https://docs.together.ai/docs/glm-5.2-quickstart"
+[16]: https://console.gmicloud.ai/model/llm/glm-5-2-fp8/1f12423b-ac10-4690-a670-36f768d7b9bf "https://console.gmicloud.ai/model/llm/glm-5-2-fp8/1f12423b-ac10-4690-a670-36f768d7b9bf"
+[17]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-instance-termination-notices.html "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-instance-termination-notices.html"
+[18]: https://pypi.org/project/vllm/0.1.4/ "https://pypi.org/project/vllm/0.1.4/"

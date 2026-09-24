@@ -17,6 +17,8 @@ export type BlogPostListItem = {
 	slug: string;
 	publishedDate: string;
 	formattedDate: string;
+	tags: string[];
+	excerpt: string;
 };
 
 export type BlogPost = BlogPostListItem & {
@@ -71,7 +73,7 @@ const shikiLanguageMap: Record<string, string> = {
 };
 
 function parseFrontmatter(source: string): BlogFrontmatter {
-	const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+	const match = source.match(/^---\n([\s\S]*?)\n---/);
 
 	if (!match) {
 		throw new Error('Missing frontmatter in blog post.');
@@ -79,7 +81,7 @@ function parseFrontmatter(source: string): BlogFrontmatter {
 
 	const frontmatter: Record<string, string> = {};
 
-	for (const rawLine of match[1].split(/\r?\n/)) {
+	for (const rawLine of match[1].split('\n')) {
 		const line = rawLine.trim();
 
 		if (!line) {
@@ -322,12 +324,24 @@ function toPlainText(markdown: string) {
 		.trim();
 }
 
+function createExcerpt(plainText: string) {
+	if (plainText.length <= 220) {
+		return plainText;
+	}
+
+	const shortened = plainText.slice(0, 217).trimEnd();
+	const lastSpace = shortened.lastIndexOf(' ');
+
+	return `${shortened.slice(0, lastSpace)}...`;
+}
+
 function getAllBlogPosts(): BlogPost[] {
 	return Object.values(blogModules)
 		.map((source) => {
 			const frontmatter = parseFrontmatter(source);
 			const markdown = stripFrontmatter(source).trim();
 			const flatHeadings = extractFlatHeadings(markdown);
+			const plainText = toPlainText(markdown);
 
 			return {
 				title: frontmatter.title,
@@ -337,7 +351,8 @@ function getAllBlogPosts(): BlogPost[] {
 				tags: frontmatter.tags,
 				headings: buildHeadingTree(flatHeadings),
 				html: renderMarkdown(markdown, flatHeadings),
-				plainText: toPlainText(markdown),
+				plainText,
+				excerpt: createExcerpt(plainText),
 				makeDiscoverable: frontmatter.make_discoverable,
 				publish: frontmatter.publish,
 				is_page: frontmatter.is_page
@@ -356,7 +371,9 @@ export function getPublishedBlogPosts(): BlogPostListItem[] {
 			title: post.title,
 			slug: post.slug,
 			publishedDate: post.publishedDate,
-			formattedDate: post.formattedDate
+			formattedDate: post.formattedDate,
+			tags: post.tags,
+			excerpt: post.excerpt
 		}));
 }
 

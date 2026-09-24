@@ -7,6 +7,7 @@ publish: true
 make_discoverable: false
 is_page: false
 ---
+
 > We reviewed ForgeCode's leaderboard runs on Terminal Bench 2.0 and found repeated references to an injected `AGENTS.md` file. In multiple cases, the agent explicitly used commands like `ls`, `cat`, and `head` to reveal that file and its contents. The visible contents are not generic boilerplate; they include **per-task solution guidance**, **helper scripts**, and **previous-run guidance**.
 
 ## Why we looked
@@ -80,7 +81,7 @@ In other runs, the agent also removes `solve.py` and related artifacts explicitl
 - [Leaderboard run](https://www.tbench.ai/leaderboard/terminal-bench/2.0/forge/unknown/claude-opus-4-6%40Anthropic/885bb73e2797a54d5de860c25f481b5a60e2b91c0de30acaca9560603e9e1ff8/3db805ad-3c4e-429e-8efa-887b12e42de8)
 - [Archived logs](/bench-logs/3db805ad-3c4e-429e-8efa-887b12e42de8.tar.gz)
 
-This is the cleanest direct read of the injected guidance file. In this run, ForgeCode agent runs `cat` on the `AGENTS.md` file, revealing it's contents to be task-specific guidance. 
+This is the cleanest direct read of the injected guidance file. In this run, ForgeCode agent runs `cat` on the `AGENTS.md` file, revealing it's contents to be task-specific guidance.
 
 ```text
 ⏺ [19:33:23] Execute [/bin/sh] ls /app/AGENTS.md && cat /app/AGENTS.md

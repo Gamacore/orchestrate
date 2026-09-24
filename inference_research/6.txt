@@ -1,0 +1,962 @@
+# Cache-Aware Agent Workloads
+
+**Technical and economic assessment — August 1, 2026**
+
+## Scope and fixed assumptions
+
+This report evaluates self-hosting of **`zai-org/GLM-5.2-FP8`**, using the exact published weights, tokenizer, chat template, 1,048,576-token context limit, FP8 E4M3 block-quantized weights, and **BF16 KV cache on H200**. The configuration has 78 layers, `kv_lora_rank=512`, and `qk_rope_head_dim=64`. SGLang currently selects BF16 KV automatically for this model on Hopper; FP8 KV on H200 is a separate, lossy configuration and is not treated as equivalent. ([Hugging Face][1])
+
+All cost calculations assume **open-weight self-hosting**, not resale of Z.ai’s retail API. Z.ai’s current public GLM-5.2 prices happen to match Arcten’s proposed Now prices—$1.40 input, $0.26 cached input, and $4.40 output—but that is a market reference, not evidence of Z.ai’s COGS or of resale rights. ([Overview - Z.AI DEVELOPER DOCUMENT][2])
+
+Current reproducibility pins are SGLang 0.5.16, vLLM 0.26.0, and LMCache 0.5.2. vLLM’s current release already includes DP-replica-aware KV tiering and substantial offload instrumentation, reinforcing that generic KV offload is becoming commodity. ([GitHub][3])
+
+---
+
+# 1. Executive conclusion
+
+## Verdict
+
+**Cache-aware inference is technically valuable, but it does not support a universal “waiting costs less” pricing thesis.**
+
+It supports a narrower proposition:
+
+> **Verified, exact-prefix, prefill-heavy workloads can receive materially lower input-token prices. Output tokens and cold misses must be priced independently.**
+
+Under the central scenarios modeled below:
+
+* RL rollouts, evaluations, and repeated long documents can eliminate **79–91% of requested prefill computation**.
+* Long-horizon and coding agents can eliminate **62–79%** when sessions remain append-only and route back to compatible workers.
+* Because output decode remains unchanged, total GPU-token cost falls by approximately:
+
+  * **41–55%** for RL, evaluations, and coding agents.
+  * **17%** for short multi-turn chat.
+  * **7%** for deep research with mostly unique retrieved context.
+* The engineering sensitivity bands are much wider—roughly **2–69% total cost reduction**—because output length, cache service cost, hit rate, and capacity price dominate the answer.
+
+## Pricing conclusion
+
+The clearest contradiction to Arcten’s proposed pricing is **output cost**.
+
+AWS currently lists an 8×H200 `p5e.48xlarge` Capacity Block at **$47.76/hour**. The exact native-BF16-KV GLM-5.2 benchmark reviewed produced 1,603.58 output tokens/s on 8×H200 under an 8K-input/1K-output saturated workload. That corresponds to roughly **$8.27/M output tokens in raw node time**, before idle capacity, CPU/RAM/network, orchestration, failures, or payment overhead. ([GPU Stack][4])
+
+Using a central decode-capacity assumption of 1,500 output tokens/s gives **$8.84/M raw output compute**. Arcten’s proposed prices would require:
+
+| Tier     | Proposed output price | Required 8×H200 output throughput | Relative to 1,604 tok/s observed |
+| -------- | --------------------: | --------------------------------: | -------------------------------: |
+| Now      |               $4.40/M |                       3,015 tok/s |                            1.88× |
+| Priority |               $3.00/M |                       4,422 tok/s |                            2.76× |
+| Standard |               $2.50/M |                       5,307 tok/s |                            3.31× |
+| Flex     |               $1.80/M |                       7,370 tok/s |                            4.60× |
+
+**Ordinary prefix caching does not reduce decode work.** Every generated token still attends over the existing context. A Hydragen-like shared-prefix attention kernel could reduce some repeated decode attention across simultaneous fanout requests, but that is a separate optimization and is not demonstrated for GLM-5.2’s DSA architecture. ([arXiv][5])
+
+Therefore:
+
+* **Do not commit any proposed output price yet.**
+* Now input at $1.40/M may be workable under sustained utilization.
+* Priority input at $0.70/M is near an optimistic raw-compute floor and lacks room for full COGS.
+* Standard and Flex input prices require substantially better prefill throughput, materially cheaper capacity, or verified cache hits.
+* Cached-input prices are plausible only for hot prefixes whose reuse pays for HBM residency or cache transfer.
+
+## Recommended product interpretation
+
+Treat completion windows as **scheduling constraints**, not automatic discounts.
+
+A delayed request should receive a discount only where Arcten can demonstrate at least one of:
+
+1. It reuses a verified native-precision prefix.
+2. It is co-scheduled with other requests sharing that prefix.
+3. It runs on meaningfully cheaper sustainable capacity.
+4. Delay creates a measurable batch or fleet-placement improvement after failure and warm-tail costs.
+
+A five-minute delay can actually make caching **less** valuable by allowing the prefix to be evicted. Flex helps only if the controller groups related requests or finds lower-cost capacity.
+
+---
+
+# 2. Evidence table
+
+`NR` means the source did not report the metric. Published sources generally do not provide statistical confidence intervals; reported ranges below are benchmark ranges or engineering sensitivity bands, not statistical CIs.
+
+| Optimization or baseline                        | Quality category                                                                                                                                                                  | Scope and measured result                                                                                                                                                                                                                                                  | Memory/utilization                                                                                                             | Savings, maturity, and disconfirming evidence                                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Within-request KV cache**                     | Exact cached bytes are bitwise-preserved when stored without transformation; execution is mathematically equivalent but need not be bitwise identical across kernel/batch changes | For a 32K prompt followed by 2K generated tokens, naive full recomputation would process 65.999M prior token positions versus about 34K token forwards with KV recurrence: >99.94% of repeated token-forward work avoided. TTFT is largely unaffected; ITL is transformed. | GLM theoretical native-BF16 latent KV payload is about 89,856 bytes/token/attention rank, derived below.                       | Mandatory and fully commodity. There is no realistic modern no-KV commercial baseline. Do not count it as Arcten-specific savings. SGLang also warns that different batching and cache decisions can select mathematically equivalent but non-bitwise-identical kernels. ([SGLang Documentation][6])                            |
+| **Exact GLM-5.2 FP8 weights, BF16 KV baseline** | Target-equivalent configuration                                                                                                                                                   | 8×H200, 8,192 input/1,024 output, 1,000 requests: 14,451.05 total tok/s and 1,603.58 output tok/s. Median/p95/p99 completion latency: 288.37/362.40/474.82s. Median/p95/p99 TTFT: 235.6/296.4/299.2s. Mean TPOT: 255.63ms.                                                 | HBM and utilization NR. Queueing was extreme, so this is a saturation point rather than an interactive SLO.                    | High model relevance, medium confidence: one published configuration and workload. Reproduce in Experiment 1. ([GPU Stack][4])                                                                                                                                                                                                  |
+| **FP8 KV on H200**                              | **Lossy approximation**, not equivalent to BF16 KV                                                                                                                                | Same general GLM benchmark family: total throughput 14,451.05→17,525.76 tok/s; output 1,603.58→1,944.77 tok/s; mean TPOT 255.63→217.89ms. About +21.3% total throughput and −14.8% TPOT.                                                                                   | Lower KV storage; exact usage NR.                                                                                              | GSM8K was 0.975 BF16 versus 0.980 FP8 in a 200-sample greedy test, but that does not validate 1M context, tool use, code, or distribution preservation. A separate ShareGPT configuration regressed total throughput by more than 50%, showing tuning gains are not fixed. Do not sell it as native precision. ([GPU Stack][4]) |
+| **Chunked prefill tuning**                      | Mathematically equivalent; bitwise identity not guaranteed                                                                                                                        | Current GLM-5.2 SGLang guidance reports that increasing the chunk size from 2K to 32K produced roughly **+34–78% output throughput** and **−39–59% TTFT** on 8×H200/B200 with 8K input/1K output. It was neutral in a decode-bound high-throughput regime.                 | About 60–90 concurrent 8K+1K requests fit in the cited single-node FP8 configurations.                                         | Production mature, workload-specific, low engineering difficulty. It interacts with batching, cache occupancy, TTFT, and decode interference. ([SGLang Documentation][7])                                                                                                                                                       |
+| **DPA and cache-aware worker routing**          | Mathematically equivalent                                                                                                                                                         | DPA removes the TP duplication problem by giving each attention replica independent KV. Current SGLang cache-aware routing documentation reports 82,665→158,596 tok/s and cache hit rate 20%→75% on 8×A100 for multiple long-prefix groups.                                | DPA increases effective aggregate KV capacity; each attention replica maintains only its own requests’ KV.                     | Commodity implementation exists. Benchmark is not GLM-5.2/H200, so transferability is medium-low until Experiment 2. Locality must be traded against queue imbalance. ([SGLang Documentation][8])                                                                                                                               |
+| **Distributed prefix scheduling—Preble**        | Exact-prefix reuse; mathematically equivalent                                                                                                                                     | Across tool use, embodied agents, programming, video QA, and long-document QA, reported prompts had 85–97% shared tokens. Preble reduced average latency by 1.5–14.5× and p99 by 2–10× versus contemporary serving baselines.                                              | GPU memory/utilization not fully reported in the summarized results. Tested on Mistral/Llama hardware configurations, not GLM. | Medium evidence for workload structure, low-medium for GLM speedup. Common sequences were reused by 8.6–126 requests on average, but interarrival ranged from 2µs to 217s, making eviction and routing central. ([arXiv][9])                                                                                                    |
+| **Hierarchical BF16 KV cache**                  | Bitwise-preserving for cached state if bytes are moved without compression or dtype conversion                                                                                    | Strata reports that a conventional SGLang CPU-offload configuration spent 74% of prefill time blocked on transfers and lost up to 4× throughput. Its optimized H200 I/O reached nearly 50GB/s with <5% prefill and <10% decode degradation.                                | CPU DRAM extends capacity; PCIe bandwidth and GPU execution interference become first-class resources.                         | High engineering difficulty. In tested long-context workloads, hierarchical systems reached ≈95% cache hit; Strata delivered roughly 1.9–5× throughput improvements over hierarchical baselines depending on model. Different models and older engine versions; exact GLM reproduction required. ([arXiv][10])                  |
+| **LayerSplit / sequence-sharded KV**            | Mathematically equivalent                                                                                                                                                         | Current GLM documentation says LayerSplit can reduce per-rank KV memory by up to 75% on the prefill side.                                                                                                                                                                  | Higher effective cache capacity.                                                                                               | Medium maturity. It introduces additional all-gather operations and can increase short-prefill or unified-decode latency. Must be measured with the router and cache hierarchy, not independently. ([SGLang Documentation][7])                                                                                                  |
+| **Shared-prefix attention—Hydragen**            | Mathematically exact attention decomposition; end-to-end bitwise identity not guaranteed                                                                                          | Reported up to approximately 32× throughput in large-batch shared-prefix CodeLlama experiments, and much weaker throughput degradation as the shared prefix grew.                                                                                                          | Can reduce repeated prefix reads/attention work during decode, not just prefill.                                               | Potentially proprietary for GLM DSA, but high implementation risk. Published experiments use older CodeLlama/A100-style configurations, not GLM-5.2 DSA or H200 native-BF16 KV. ([arXiv][5])                                                                                                                                    |
+| **GLM agentic trace in NVIDIA Dynamo**          | Uses **lossy FP8 KV on H200**                                                                                                                                                     | For a shaped 64K-input/400-output trace with 90% prefix-cache hits: aggregated H200 reported 54.55 output tok/s/GPU and p50 TTFT 1.79s; a 16-GPU disaggregated setup reported 68.86 output tok/s/GPU and p50 TTFT 1.874s.                                                  | H200 recipe limited to 250K context rather than the full 1M window.                                                            | Useful evidence that 90% trace-level hit rates are operationally possible, but not evidence for native-BF16 economics or arbitrary production traffic. ([NVIDIA Docs][11])                                                                                                                                                      |
+
+---
+
+# 3. Reproducible calculations
+
+## 3.1 Prefill and decode cost anchors
+
+### Inputs
+
+* H200 node price: **$47.76/hour for 8×H200**. ([Amazon Web Services, Inc.][12])
+* Central modeled prefill capacity: **20,000 input tok/s**.
+* Prefill sensitivity range: **12,500–24,000 input tok/s**.
+* Central modeled decode capacity: **1,500 output tok/s**.
+* Decode sensitivity range: **1,200–1,800 output tok/s**.
+* The 12.5K input and 1.5–1.6K output regions are anchored to the exact mixed-workload benchmark. The higher prefill values are optimistic isolated-phase/tuned scenarios, not measured pure-prefill results.
+* Credits are excluded.
+
+For a phase with service rate (R):
+
+[
+C_{\text{raw GPU}} = \frac{$47.76}{3600R}\times 10^6
+]
+
+| Phase                  | Central raw GPU cost | Sensitivity range |
+| ---------------------- | -------------------: | ----------------: |
+| Uncached input prefill |         **$0.663/M** |   $0.553–$1.061/M |
+| Output decode          |         **$8.844/M** |  $7.370–$11.056/M |
+
+These are capacity-share estimates. They are not a claim that prefill and decode consume separable GPUs in a unified deployment.
+
+### Throughput needed to support Arcten’s prices before overhead
+
+| Tier     | Input price | Required prefill tok/s | Output price | Required decode tok/s |
+| -------- | ----------: | ---------------------: | -----------: | --------------------: |
+| Now      |       $1.40 |                  9,476 |        $4.40 |                 3,015 |
+| Priority |       $0.70 |                 18,952 |        $3.00 |                 4,422 |
+| Standard |       $0.50 |                 26,533 |        $2.50 |                 5,307 |
+| Flex     |       $0.40 |                 33,167 |        $1.80 |                 7,370 |
+
+At 1,500 output tok/s, the maximum sustainable node prices before any overhead would be:
+
+* Now: **$23.76/hour**
+* Priority: **$16.20/hour**
+* Standard: **$13.50/hour**
+* Flex: **$9.72/hour**
+
+AWS’s $47.76/hour anchor is approximately twice the Now-output break-even node price.
+
+## 3.2 Complete COGS scenarios
+
+Use:
+
+[
+COGS_X =
+\frac{C_{\text{raw GPU},X}}{\text{productive utilization}}
+\times (1+\text{non-GPU markup})
+]
+
+Idle and warm-tail capacity are represented by utilization. The markup represents model loading and compilation, CPU/RAM/storage/networking, orchestration, interruption/retry/failure reserve, and provider/payment overhead.
+
+These are explicit planning assumptions, not observed bills:
+
+| Scenario      | Productive utilization | Load/compile | CPU/RAM/storage/network | Orchestration | Failure reserve | Provider/payment | Modeled input COGS | Modeled output COGS |
+| ------------- | ---------------------: | -----------: | ----------------------: | ------------: | --------------: | ---------------: | -----------------: | ------------------: |
+| Low load      |                    25% |          10% |                      5% |            3% |              4% |               3% |        **$3.32/M** |        **$44.22/M** |
+| Burst         |                    55% |           6% |                      4% |            2% |              3% |               3% |        **$1.42/M** |        **$18.98/M** |
+| Sustained     |                    85% |           2% |                      3% |            2% |              2% |               3% |        **$0.87/M** |        **$11.65/M** |
+| Failure-heavy |                    45% |           8% |                      6% |            4% |             14% |               3% |        **$1.99/M** |        **$26.53/M** |
+
+Consequences:
+
+* Now input is approximately break-even in the burst scenario and has some room under sustained load.
+* Priority input lacks adequate room under these assumptions.
+* None of the output tiers work on this capacity anchor.
+* Spot capacity can improve the numbers only after interruption, restart, cache loss, and retry costs are included.
+* Delaying work is economically useful only where it measurably increases productive utilization or lowers capacity price.
+
+## 3.3 Native-BF16 KV memory
+
+From the exact GLM configuration:
+
+[
+\text{KV bytes/token/attention rank}
+====================================
+
+# (512+64)\times 2\text{ bytes}\times78
+
+89{,}856\text{ bytes}
+]
+
+This models the latent DSA/MLA KV payload. It excludes page metadata, indexer state, alignment, allocator fragmentation, MTP state, CUDA graphs, and workspaces.
+
+| Sequence length | Theoretical BF16 KV per attention rank |
+| --------------: | -------------------------------------: |
+|           8,192 |                               0.736 GB |
+|          32,768 |                               2.944 GB |
+|          65,536 |                               5.889 GB |
+|         131,072 |                              11.778 GB |
+|       1,000,000 |                              89.856 GB |
+|       1,048,576 |                              94.221 GB |
+
+The model’s FP8 weights use about 89GB/GPU in the published SGLang guidance, leaving the remainder of a 141GB H200 for KV, graphs, buffers, and runtime allocations. The calculations below conservatively assume a **30GB usable KV pool per DPA attention rank**. ([SGLang Documentation][7])
+
+That supports approximately:
+
+[
+30\text{ GB}/89{,}856 \approx 333{,}868
+]
+
+sequence tokens per rank. With eight DPA attention ranks whose KV is not duplicated, aggregate node capacity is approximately **2.67M resident sequence tokens**. DPA’s independent per-rank KV layout is essential to this result. ([SGLang Documentation][8])
+
+### HBM opportunity cost
+
+At saturation:
+
+[
+\text{HBM shadow cost}
+======================
+
+# \frac{47.76/3600}{2.671\text{M tokens}}
+
+$0.004967/\text{M-token-second}
+]
+
+Therefore the HBM occupancy cost per million retained tokens is:
+
+| Residence time | HBM opportunity cost per M retained tokens | Minimum reuses at $0.26 | At $0.18 | At $0.12 | At $0.08 |
+| -------------: | -----------------------------------------: | ----------------------: | -------: | -------: | -------: |
+|     30 seconds |                                     $0.149 |                       1 |        1 |        2 |        2 |
+|    120 seconds |                                     $0.596 |                       3 |        4 |        5 |        8 |
+|    300 seconds |                                     $1.490 |                       6 |        9 |       13 |       19 |
+
+These counts recover **HBM occupancy only**. Lookup, routing, insertion, eviction, fragmentation, failures, and customer support remain additional.
+
+For a 32K prefix held for 30 seconds, the HBM opportunity cost is approximately **$0.00477 total**. If it is reused once, that is $0.149/M cached tokens; twice, $0.0745/M.
+
+**Correction to the earlier interim estimate:** the 5–15 reuses at 30 seconds was the conservative one-rank/fully replicated bound. With the exact DPA layout’s aggregate capacity, the baseline is approximately 1–2 reuses. Replicating a hot prefix onto (W) ranks multiplies its occupancy cost and required reuse by (W).
+
+### Eviction rule
+
+Do not use LRU alone. Retain a block only when:
+
+[
+\sum_j P(\text{reuse}*j)
+\left(C*{\text{recompute}}-C_{\text{hit},j}\right)
+
+>
+
+\text{byte-seconds}\times\text{HBM shadow price}
++
+\text{eviction externality}
+]
+
+The predictor should include:
+
+* Tenant and session.
+* Exact prefix length.
+* Recent interarrival and fanout.
+* Deadline/window.
+* Unique suffix and expected output length.
+* Adapter identity.
+* Current rank queue and cache pressure.
+* Probability that the worker survives until reuse.
+
+A long prefix with one probable hit in five minutes may be worse than a smaller prefix expected to receive ten hits in five seconds.
+
+## 3.4 Host-memory and storage tier economics
+
+The theoretical native-BF16 KV transfer volume is **89.856GB per million prefix tokens per attention rank**.
+
+Under a conservative assumption that a restore blocks the entire node’s critical path:
+
+| Effective per-rank transfer bandwidth | Restore time per M prefix tokens | Node-time cost |
+| ------------------------------------: | -------------------------------: | -------------: |
+|                                 2GB/s |                           44.93s |       $0.596/M |
+|                                 5GB/s |                           17.97s |       $0.238/M |
+|                                10GB/s |                            8.99s |       $0.119/M |
+|                                25GB/s |                            3.59s |      $0.0477/M |
+|                                50GB/s |                            1.80s |      $0.0238/M |
+
+At the central 20K input tok/s assumption, recomputing one million prefix tokens takes 50 seconds and costs $0.663. The simple transfer-versus-recompute threshold is therefore approximately:
+
+[
+89.856\text{ GB}/50\text{ s}=1.80\text{ GB/s per rank}
+]
+
+But this threshold is insufficient for production decisions:
+
+* Transfers can block prefill kernels or compete for GPU resources.
+* Fragmented paged KV often fails to reach nominal PCIe bandwidth.
+* Simultaneous DPA-rank restores can saturate host memory or PCIe.
+* An overlapped restore may have much lower opportunity cost than the whole-node bound.
+* A host hit can still lose to recompute when its queue delay is high.
+
+Strata’s nearly 50GB/s H200 result shows that efficient transfer is possible, while its 74%-blocked conventional baseline shows that a naive cache hierarchy can be substantially worse than recomputation. ([arXiv][10])
+
+## 3.5 Workload-level savings
+
+### Central cost assumptions
+
+* Uncached input: **$0.663/M**
+* Exact cached-input service: **$0.12/M**
+* Output: **$8.844/M**
+* These are GPU-capacity estimates before utilization and non-GPU overhead.
+* Cached service sensitivity: $0.03–$0.40/M.
+* Input sensitivity: $0.553–$1.061/M.
+* Output sensitivity: $7.37–$11.06/M.
+
+The bands below are **engineering sensitivity bands**, not statistical confidence intervals.
+
+| Workload scenario                                                                                                   | Requested input | Recomputed input after cache | Prefill computation eliminated | Baseline → cached GPU-token cost | Central total saving | Sensitivity band | Assessment                                                                 |
+| ------------------------------------------------------------------------------------------------------------------- | --------------: | ---------------------------: | -----------------------------: | -------------------------------: | -------------------: | ---------------: | -------------------------------------------------------------------------- |
+| **Long-horizon agent:** 20 turns; 16K starting context; +1K/turn; 500 output/turn; 85% continuation affinity        |            510K |                       106.3K |                      **79.2%** |                  $0.427 → $0.207 |            **51.4%** |       15.7–67.7% | Strong when history is append-only and returns to a live compatible worker |
+| **Coding agent:** 30 turns; 64K repository/tool prefix; +2K/turn; 1K output/turn; 80% affinity                      |          2.790M |                       655.6K |                      **76.5%** |                  $2.116 → $0.956 |            **54.8%** |       17.4–69.2% | Strong; canonical tool schemas and stable repository snapshots matter      |
+| **Short multi-turn chat:** 10 turns; 1K base; +500/turn; 500 output/turn; 75% affinity                              |           32.5K |                        12.3K |                      **62.3%** |                $0.0658 → $0.0548 |            **16.7%** |        4.2–29.3% | High percentage hit, low absolute value; output dominates                  |
+| **RL rollouts:** 64 samples; 32K shared state/prompt; 1K unique suffix; 2K output; prefix replicated across 4 ranks |          2.112M |                         192K |                      **90.9%** |                  $2.533 → $1.490 |            **41.2%** |       11.4–62.2% | Strong, especially with burst-local fanout; output still substantial       |
+| **Evaluation:** 1,000 cases; 4K common rubric/few-shot prefix; 1K unique case; 100 output; 8 replicas               |          5.000M |                       1.032M |                      **79.4%** |                  $4.201 → $2.045 |            **51.3%** |       15.7–67.7% | Strong; deterministic templates and coordinated batching help              |
+| **Deep research:** 20 requests; 3K shared system/tool prefix; 20K unique retrieved material; 500 output; 4 replicas |            460K |                         412K |                      **10.4%** |                  $0.394 → $0.367 |             **6.6%** |         2.0–8.8% | Weak unless many questions reuse the same source corpus                    |
+
+### Multi-turn formula
+
+For (N) turns, starting context (B), and (d) appended tokens per turn:
+
+[
+T_{\text{requested}}
+====================
+
+NB+d\frac{N(N-1)}{2}
+]
+
+With probability (p) that a continuation reaches its cached worker:
+
+[
+E[T_{\text{computed}}]
+======================
+
+B+
+\sum_{t=1}^{N-1}
+\left[
+pd+(1-p)(B+td)
+\right]
+]
+
+A miss is modeled as recomputing the entire current prefix.
+
+### Fanout formula
+
+For (K) requests sharing prefix (P), each having unique suffix (S), with the prefix materialized on (W) workers:
+
+[
+T_{\text{requested}}=K(P+S)
+]
+
+[
+T_{\text{computed}}=WP+KS
+]
+
+[
+\text{prefill reduction}
+========================
+
+1-\frac{WP+KS}{K(P+S)}
+]
+
+Replication is not free. Increasing (W) reduces queue concentration but recomputes and stores (P) another time.
+
+## Workloads with real cache advantage
+
+**High value**
+
+* RL rollout fanout from a common state.
+* Evaluations with common rubrics, few-shot examples, or long documents.
+* Coding agents with stable repository snapshots and tool definitions.
+* Long-horizon append-only agents.
+* Repeated QA over a fixed document or corpus.
+* Tree search where branches share a long ancestor.
+
+**Conditional value**
+
+* Deep research when many questions concern the same cached corpus.
+* Multi-turn customer support with long stable policies or account context.
+* Tool-using agents whose tool schema is stable and placed early in the prompt.
+
+**Little or no value**
+
+* Unique one-shot prompts.
+* Deep research where retrieved documents differ and are inserted near the beginning.
+* Short conversations whose output is longer or costlier than the prompt.
+* Prompts containing changing timestamps, request IDs, randomized few-shot order, or nondeterministic tool definitions near the front.
+* Frequent model, tokenizer, runtime, context, or adapter changes.
+* Semantic similarity without exact token-prefix identity.
+
+---
+
+## 3.6 Privacy-safe prefix-aware routing
+
+### Compatibility boundary
+
+A KV cache entry must be keyed by the complete execution identity:
+
+```text
+tenant namespace
+exact model-weight digest
+tokenizer digest
+chat-template / processor digest
+context and RoPE configuration
+KV dtype
+engine/cache ABI
+attention and tensor-parallel layout
+adapter/LoRA digest, scale, and composition
+multimodal processor digest
+ordered prefix token IDs
+```
+
+Any mismatch is a cache miss. Do not attempt “close enough” reuse.
+
+Sampling parameters generally do not affect already-computed prompt KV, but every generated token incorporated into a later turn becomes part of that later prefix identity.
+
+### Tenant-private block IDs
+
+For each 32–64-token block:
+
+[
+H_i =
+HMAC_{\text{SHA256}}
+(
+K_{\text{tenant}},
+\text{compatibility tuple}\parallel H_{i-1}\parallel\text{token IDs}_i
+)
+]
+
+Properties:
+
+* Different tenants receive unlinkable hashes even for identical text.
+* The router never needs plaintext prompts.
+* A non-cryptographic global token hash must not be the isolation boundary.
+* Workers should still verify the exact tokens and compatibility tuple before attaching cached state.
+
+### Router state
+
+The router stores only:
+
+```text
+tenant-scoped opaque block hash
+worker/rank identifier
+cache tier: HBM, host, storage, or in-flight
+generation/version ID
+last access and insertion time
+byte size
+expected restore cost
+worker health
+```
+
+Workers send signed add, promote, demote, and eviction events. The index is soft state:
+
+* Stale “hit” → verified miss and recomputation.
+* Stale “miss” → lost optimization only.
+* Stale data must never cause reuse under the wrong compatibility tuple.
+
+### Economic routing score
+
+For request (r) and worker (w):
+
+[
+Score(r,w)=
+Q_w+
+\frac{\text{new prefill tokens}*{r,w}}{R_p}+
+\frac{\text{expected output tokens}*r}{R_d}+
+T*{\text{restore}}+
+C*{\text{eviction}}+
+C_{\text{failure}}
+]
+
+subject to the completion-window deadline.
+
+Route to the cache-local worker only where avoided prefill time exceeds:
+
+* Its extra queue delay.
+* Cache restore time.
+* The value of blocks that must be evicted.
+* The expected cost of worker interruption.
+* The cost of replicating a hot prefix.
+
+Multiple unsynchronized gateway replicas can themselves reduce effective hit rate; current SGLang guidance reports a 10–20% reduction in some multi-gateway deployments and recommends session affinity. ([SGLang Documentation][13])
+
+### Isolation controls
+
+* Never share KV across tenant namespaces, even when plaintext prefixes appear identical.
+* Encrypt host, storage, and transport tiers.
+* Enforce per-tenant byte quotas, TTLs, and deletion tombstones.
+* Do not expose cross-tenant cache-hit or cache-residency status.
+* Customer-visible cache metrics must be scoped to that customer.
+* Use dedicated worker pools or timing padding for customers with strong side-channel requirements.
+* An adapter change immediately invalidates affected entries.
+* Worker loss becomes a safe miss; the system must not depend on cache persistence for correctness.
+
+---
+
+# 4. What is already commodity
+
+The following should be treated as table stakes rather than Arcten IP:
+
+* Within-request KV caching.
+* Paged KV allocation and radix-tree or block-based prefix caches.
+* Continuous batching.
+* CUDA graphs.
+* FlashAttention, FlashInfer, and model-specific sparse-attention kernels.
+* DPA/EP execution for MLA/DSA-style MoE models.
+* Cache-aware longest-prefix routing with load-balancing fallback.
+* Prefix-cache event indexes.
+* Host-memory and NVMe cache tiers.
+* Prefill/decode disaggregation.
+* Layer-wise asynchronous KV transfer.
+* Cache metrics, health checks, retries, and worker registration.
+
+SGLang already exposes production cache-aware routing and hierarchical caching; vLLM 0.26 has DP-aware tiering and offload events; LMCache supports external KV tiers. ([SGLang Documentation][8])
+
+A product that merely enables these features will not have durable performance differentiation.
+
+---
+
+# 5. What could become proprietary
+
+## 1. Cache-value prediction
+
+A trace-trained model that predicts:
+
+* Reuse probability and reuse distance.
+* Fanout.
+* Session continuation.
+* Prefix lifetime.
+* Whether retention or recomputation is cheaper.
+* Whether a delayed request should wait for an in-flight prefix.
+* Whether a hot prefix deserves replication.
+
+The moat would be operating data and calibration, not the eviction algorithm alone.
+
+## 2. Joint deadline, cache, and fleet scheduling
+
+A global controller that jointly optimizes:
+
+* Customer completion window.
+* Prefix locality.
+* Queue and batching state.
+* HBM, host, and storage bandwidth.
+* Spot interruption risk.
+* Worker warm state.
+* Capacity provider and price.
+* Adaptive prefix replication.
+
+This is more defensible than a generic longest-prefix router.
+
+## 3. Exact native-BF16 GLM cache mobility
+
+An efficient path for:
+
+* Native BF16 DSA KV movement.
+* DPA-rank-aware placement.
+* Layout conversion without lossy compression.
+* Layer-wise overlapped restore.
+* Cross-node transfer with compatibility verification.
+* Accurate blocked-time versus overlapped-time accounting.
+
+## 4. Customer-side cacheability tooling
+
+An SDK or gateway analyzer that detects:
+
+* Changing tokens near the beginning of prompts.
+* Unstable tool-schema ordering.
+* Adapter churn.
+* Low-value retention.
+* Opportunities to move variable content later without changing semantics.
+* Expected cache savings before a customer changes workload behavior.
+
+## 5. Shared-prefix decode kernels for GLM DSA
+
+A Hydragen-like exact shared-prefix attention implementation adapted to GLM-5.2’s DSA/indexer path could affect output economics for simultaneous fanout. This is potentially high-value but substantially riskier than control-plane work and should not be on the initial critical path.
+
+---
+
+# 6. Three experiments Arcten can run within two weeks
+
+## Experiment 1 — Exact-model native-precision phase and cache benchmark
+
+### Configuration
+
+* `zai-org/GLM-5.2-FP8`
+* Official tokenizer and template.
+* 8×H200.
+* SGLang 0.5.16.
+* TP8, DP8, DPA enabled.
+* BF16 KV, explicitly verified from runtime metrics.
+* No FP8 KV, speculative decoding, or model substitutions in the baseline.
+
+Use the published GLM/DPA configuration as the launch starting point. ([SGLang Documentation][7])
+
+### Matrix
+
+| Variable                     | Values                                       |
+| ---------------------------- | -------------------------------------------- |
+| Input/output                 | 1K/128, 8K/1K, 32K/400, 64K/400              |
+| Exact shared-prefix fraction | 0%, 25%, 50%, 75%, 90%                       |
+| Interarrival/reuse distance  | 100ms, 5s, 30s, 120s, 300s                   |
+| Offered load                 | low, burst, sustained overload               |
+| Worker outcome               | normal, restart, kill during cache insertion |
+| Prompt mode                  | one-shot, append-only session, fanout        |
+
+### Record
+
+* Prefill and output tokens/s separately.
+* TTFT, TPOT, ITL, total completion time: p50/p95/p99.
+* GPU utilization, HBM use, power.
+* KV payload bytes and allocator overhead.
+* Cache lookup latency.
+* Effective hit rate, not requested hit rate.
+* Evictions and miss cause.
+* Model loading and compilation duration.
+* Exact output-token comparison under greedy decoding.
+* KV block checksums before and after tier movement.
+
+### Pass condition
+
+Establish isolated or resource-attributed (R_p) and (R_d) values with less than 10% run-to-run variance and enough data to replace the planning assumptions in this report.
+
+## Experiment 2 — Router shootout under realistic agent traces
+
+### Variants
+
+1. Round robin.
+2. Session-sticky.
+3. Longest-prefix match.
+4. Economic score using queue, prefix overlap, restore time, eviction shadow price, and failure probability.
+
+### Workloads
+
+Replay the six scenarios in the workload table, plus:
+
+* One extremely hot prefix.
+* Adapter change halfway through a session.
+* Tool-schema reordering.
+* Multiple router replicas with and without shared index.
+* Stale cache events.
+* Worker loss and retry.
+* A five-minute Flex queue.
+
+### Metrics
+
+* Effective exact-token hit rate.
+* Recomputed prefix tokens.
+* Prefix replication factor.
+* Queue imbalance.
+* HBM byte-seconds.
+* TTFT and completion p99.
+* COGS per million requested versus computed tokens.
+* Number of incorrect compatibility attempts; required result is zero.
+
+### Pass condition
+
+Compared with shortest-queue or round-robin:
+
+* ≥25% total COGS reduction on at least one target workload.
+* No more than 10% p99 penalty on cache misses.
+* No cross-tenant lookup or reuse.
+* Hot-prefix overload remains bounded.
+
+## Experiment 3 — Hierarchical native-BF16 break-even test
+
+### Tiers
+
+* HBM.
+* Pinned host RAM.
+* LMCache/engine-native host tier.
+* Local NVMe.
+* Optional second H200 node over production-intended networking.
+
+### Matrix
+
+* Prefixes: 8K, 32K, 64K, 128K.
+* Effective bandwidth throttles: 2, 5, 10, 25, 50GB/s.
+* One and eight concurrent DPA-rank restores.
+* Reuse gaps: 5, 30, 120, 300 seconds.
+* Restore alone, restore overlapped with prefill, and restore overlapped with decode.
+* Cold, warm, and fragmented cache.
+
+### Validate
+
+* The approximately 1.8GB/s/rank recompute threshold.
+* Actual critical-path versus overlapped transfer cost.
+* Page fragmentation.
+* Host memory bandwidth saturation.
+* Whether transfer causes the Strata-style stall failure.
+* Whether storage prefetch can fit inside Priority or Standard queue windows.
+
+### Pass condition
+
+A host hit must:
+
+* Beat recomputation on total completion time.
+* Reduce total measured COGS.
+* Add no more than 10% decode degradation.
+* Preserve exact BF16 KV checksums.
+
+---
+
+# 7. Three-month engineering recommendation
+
+## Month 1 — Measurement and compatibility foundation
+
+Build:
+
+* Exact-model benchmark harness.
+* Per-phase GPU-time and energy accounting.
+* Compatibility-tuple service.
+* Tenant-scoped HMAC block IDs.
+* Worker cache event stream.
+* Trace schema for sessions, prefixes, adapters, reuse distance, and deadlines.
+* COGS ledger including idle, warmup, infrastructure, and failures.
+
+Do not build custom kernels yet.
+
+## Month 2 — Cache-aware control plane
+
+Implement:
+
+* Global soft-state prefix index.
+* Economic router.
+* Session affinity.
+* Tenant quotas and TTLs.
+* Value-based eviction.
+* Adaptive replication.
+* HBM and host-RAM tiers.
+* In-flight prefix tracking so compatible queued requests can wait for one computation rather than duplicate it.
+* Worker kill, stale-event, and retry testing.
+
+Base it on SGLang or vLLM rather than replacing their schedulers and kernels wholesale.
+
+## Month 3 — Production hardening and one pilot
+
+Implement:
+
+* Deletion and tombstone propagation.
+* Cache encryption and audit logging.
+* Multi-router consistency.
+* Failure-aware billing.
+* Per-customer cacheability reports.
+* Full COGS attribution.
+* One pilot with a cache-heavy workload: RL rollout, evaluation, coding agent, or repeated long-document QA.
+
+### Go/no-go gates
+
+Proceed to a priced cache-aware product only if the pilot demonstrates:
+
+* **≥60% effective exact cached-input hit rate.**
+* **≥25% total COGS reduction**, including cache storage, transfer, failures, and warm tail.
+* Hit TTFT at least **2× better** than cold prefill.
+* Miss p99 no more than **10% worse** than cache-disabled routing.
+* Zero cross-tenant reuse.
+* 100% compatibility/checksum success.
+* Independently sustainable output COGS.
+
+### Commercial recommendation
+
+Do not initially sell four universal timing tiers.
+
+Sell two independently metered dimensions:
+
+1. **Output and cold input**, priced from actual fleet COGS.
+2. **Verified cached input**, discounted according to cache tier and workload agreement.
+
+Priority and Standard windows can subsequently become scheduling controls. Flex should remain best effort until Arcten has demonstrated cheaper sustainable capacity and failure-adjusted economics.
+
+---
+
+# 8. Explicit reasons the approach might fail
+
+1. **Output dominates total cost.** Ordinary prefix caching does not reduce the output-token floor.
+
+2. **The proposed output prices are below demonstrated AWS H200 raw compute.** Achieving them requires roughly 1.9–4.6× more native-BF16 decode throughput, much cheaper sustainable capacity, or a new output-side optimization.
+
+3. **Effective hit rate may be far below apparent prompt similarity.** Timestamps, repository changes, retrieval order, request IDs, tool-schema changes, and template drift can invalidate a prefix near its beginning.
+
+4. **Long completion windows can reduce cache value.** A request arriving or executing five minutes later may find its prefix evicted; retaining everything for five minutes is economically expensive.
+
+5. **Worker affinity conflicts with load balancing.** Routing every hot prefix to one worker creates queues and tail-latency failures. Replication fixes load but duplicates HBM and prefill work.
+
+6. **Native-BF16 KV is large.** At roughly 89.9GB per million tokens per attention rank before overhead, cache retention competes directly with batch size and active decode capacity.
+
+7. **Hierarchical caching may become an I/O bottleneck.** Published evidence includes both near-50GB/s tuned transfers and a conventional implementation that lost up to 4× throughput.
+
+8. **Adapter and runtime churn fragment the cache.** Different LoRAs, scales, engine layouts, KV dtypes, or model revisions cannot safely share physical KV state.
+
+9. **Privacy removes the largest theoretical cache pool.** Never sharing across customers means common public system prompts or tools cannot generate global cross-tenant savings.
+
+10. **Spot interruptions destroy warm state.** Worker loss causes retries, cold model starts, cache loss, and load concentration on fallback nodes.
+
+11. **Cache index staleness can erase savings.** Multiple gateways and asynchronous eviction events can produce false hits or misses; correctness requires worker-side verification.
+
+12. **Delayed jobs may arrive in the wrong distribution.** Flex traffic might be unrelated, output-heavy, or insufficient to fill batches.
+
+13. **Modern open-source stacks are moving quickly.** Generic cache routing, tiering, and observability are unlikely to remain proprietary.
+
+14. **Benchmark optimizations may not compose.** Chunked prefill, DPA, speculative decoding, cache transfer, PD disaggregation, and prefix routing compete for memory and bandwidth. A gain measured alone can regress the target workload.
+
+15. **Retail competitor prices do not establish sustainable COGS.** They may reflect internal hardware, cross-subsidy, promotional storage pricing, or strategic margin decisions.
+
+16. **Retail API resale may be prohibited or uneconomic.** BYOK, OEM/wholesale, and self-hosted open-weight serving must remain separate products and contracts.
+
+17. **Cloud credits can conceal an invalid unit model.** They should fund these experiments but never enter the steady-state COGS assumptions.
+
+---
+
+## Minimal calculation script
+
+```python
+from __future__ import annotations
+
+NODE_HOURLY = 47.76
+
+PREFILL_TPS = 20_000.0
+DECODE_TPS = 1_500.0
+
+UNCACHED_INPUT_PER_M = NODE_HOURLY / (PREFILL_TPS * 3600) * 1_000_000
+OUTPUT_PER_M = NODE_HOURLY / (DECODE_TPS * 3600) * 1_000_000
+CACHED_INPUT_PER_M = 0.12
+
+LAYERS = 78
+KV_LORA_RANK = 512
+QK_ROPE_HEAD_DIM = 64
+KV_BYTES = 2  # BF16
+
+KV_BYTES_PER_TOKEN_PER_ATTN_RANK = (
+    (KV_LORA_RANK + QK_ROPE_HEAD_DIM) * KV_BYTES * LAYERS
+)
+
+
+def raw_gpu_cost_per_m(tps: float) -> float:
+    if tps <= 0:
+        raise ValueError("tps must be positive")
+    return NODE_HOURLY / (tps * 3600) * 1_000_000
+
+
+def multiturn_tokens(
+    turns: int,
+    base_tokens: int,
+    appended_per_turn: int,
+    continuation_hit_probability: float,
+) -> tuple[float, float, float]:
+    """Return requested input, recomputed input, and skipped input."""
+    if turns < 1:
+        raise ValueError("turns must be >= 1")
+    if not 0 <= continuation_hit_probability <= 1:
+        raise ValueError("hit probability must be in [0, 1]")
+
+    requested = (
+        turns * base_tokens
+        + appended_per_turn * turns * (turns - 1) / 2
+    )
+
+    recomputed = float(base_tokens)
+    for turn in range(1, turns):
+        current_prefix = base_tokens + turn * appended_per_turn
+        recomputed += (
+            continuation_hit_probability * appended_per_turn
+            + (1 - continuation_hit_probability) * current_prefix
+        )
+
+    return requested, recomputed, requested - recomputed
+
+
+def fanout_tokens(
+    requests: int,
+    shared_prefix: int,
+    unique_suffix: int,
+    prefix_replicas: int,
+) -> tuple[int, int, int]:
+    """Return requested input, computed input, and skipped input."""
+    requested = requests * (shared_prefix + unique_suffix)
+    computed = prefix_replicas * shared_prefix + requests * unique_suffix
+    return requested, computed, requested - computed
+
+
+def request_cost(
+    requested_input: float,
+    recomputed_input: float,
+    output_tokens: float,
+) -> tuple[float, float, float]:
+    skipped_input = requested_input - recomputed_input
+
+    baseline = (
+        requested_input / 1_000_000 * UNCACHED_INPUT_PER_M
+        + output_tokens / 1_000_000 * OUTPUT_PER_M
+    )
+
+    cached = (
+        recomputed_input / 1_000_000 * UNCACHED_INPUT_PER_M
+        + skipped_input / 1_000_000 * CACHED_INPUT_PER_M
+        + output_tokens / 1_000_000 * OUTPUT_PER_M
+    )
+
+    saving = 1 - cached / baseline
+    return baseline, cached, saving
+
+
+def hbm_cost_per_m_retained_tokens(
+    usable_kv_bytes_per_rank: float = 30e9,
+    attention_ranks: int = 8,
+    residence_seconds: float = 30,
+) -> float:
+    tokens_per_rank = (
+        usable_kv_bytes_per_rank / KV_BYTES_PER_TOKEN_PER_ATTN_RANK
+    )
+    aggregate_tokens = tokens_per_rank * attention_ranks
+    node_cost_per_second = NODE_HOURLY / 3600
+
+    return (
+        node_cost_per_second
+        * residence_seconds
+        / aggregate_tokens
+        * 1_000_000
+    )
+
+
+if __name__ == "__main__":
+    print(f"Raw input GPU cost:  ${UNCACHED_INPUT_PER_M:.3f}/M")
+    print(f"Raw output GPU cost: ${OUTPUT_PER_M:.3f}/M")
+    print(
+        "BF16 KV bytes/token/attention-rank:",
+        KV_BYTES_PER_TOKEN_PER_ATTN_RANK,
+    )
+    print(
+        "30-second HBM cost:",
+        f"${hbm_cost_per_m_retained_tokens():.3f}/M retained tokens",
+    )
+
+    requested, computed, skipped = fanout_tokens(
+        requests=64,
+        shared_prefix=32_000,
+        unique_suffix=1_000,
+        prefix_replicas=4,
+    )
+    baseline, optimized, saving = request_cost(
+        requested_input=requested,
+        recomputed_input=computed,
+        output_tokens=64 * 2_000,
+    )
+
+    print(
+        {
+            "requested_input": requested,
+            "computed_input": computed,
+            "skipped_input": skipped,
+            "baseline_cost": round(baseline, 4),
+            "cached_cost": round(optimized, 4),
+            "saving_pct": round(saving * 100, 2),
+        }
+    )
+```
+
+[1]: https://huggingface.co/zai-org/GLM-5.2-FP8/raw/main/config.json "https://huggingface.co/zai-org/GLM-5.2-FP8/raw/main/config.json"
+[2]: https://docs.z.ai/guides/overview/pricing "https://docs.z.ai/guides/overview/pricing"
+[3]: https://github.com/vllm-project/vllm/releases "https://github.com/vllm-project/vllm/releases"
+[4]: https://docs.gpustack.ai/latest/performance-lab/glm-5.2/h200/ "https://docs.gpustack.ai/latest/performance-lab/glm-5.2/h200/"
+[5]: https://arxiv.org/html/2402.05099v2 "https://arxiv.org/html/2402.05099v2"
+[6]: https://docs.sglang.ai/references/faq.html "https://docs.sglang.ai/references/faq.html"
+[7]: https://lmsysorg.mintlify.app/cookbook/autoregressive/GLM/GLM-5.2 "https://lmsysorg.mintlify.app/cookbook/autoregressive/GLM/GLM-5.2"
+[8]: https://docs.sglang.io/docs/advanced_features/dp_dpa_smg_guide "https://docs.sglang.io/docs/advanced_features/dp_dpa_smg_guide"
+[9]: https://arxiv.org/html/2407.00023v2 "https://arxiv.org/html/2407.00023v2"
+[10]: https://arxiv.org/html/2508.18572v1 "https://arxiv.org/html/2508.18572v1"
+[11]: https://docs.nvidia.com/dynamo/dev/recipes/glm-5-2 "https://docs.nvidia.com/dynamo/dev/recipes/glm-5-2"
+[12]: https://aws.amazon.com/ec2/capacityblocks/pricing/ "https://aws.amazon.com/ec2/capacityblocks/pricing/"
+[13]: https://docs.sglang.ai/advanced_features/sgl_model_gateway.html "https://docs.sglang.ai/advanced_features/sgl_model_gateway.html"

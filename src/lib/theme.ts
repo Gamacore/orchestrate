@@ -8,11 +8,11 @@ export function isThemeMode(value: string | null): value is ThemeMode {
 
 export function getStoredTheme(): ThemeMode {
 	if (typeof window === 'undefined') {
-		return 'system';
+		return 'light';
 	}
 
 	const storedTheme = window.localStorage.getItem(THEME_KEY);
-	return isThemeMode(storedTheme) ? storedTheme : 'system';
+	return isThemeMode(storedTheme) ? storedTheme : 'light';
 }
 
 export function applyTheme(theme: ThemeMode) {

@@ -1,0 +1,94 @@
+# Serving-engine benchmark result
+
+The complete report and executable benchmark package are attached:
+
+* [Research report](sandbox:/mnt/data/Arcten_Serving_Engine_Benchmark_2026-08-01.md)
+* [Benchmark harness, manifests, launch scripts, workloads, evidence, tests, and calculations](sandbox:/mnt/data/Arcten_Serving_Engine_Benchmark_2026-08-01.zip)
+* [SHA-256 checksums](sandbox:/mnt/data/Arcten_Serving_Engine_Benchmark_2026-08-01.sha256)
+* [Evidence matrix](sandbox:/mnt/data/arcten_engine_benchmark/docs/evidence.csv)
+* [Machine-readable execution status](sandbox:/mnt/data/arcten_engine_benchmark/EXECUTION_STATUS.json)
+
+## Executive conclusion
+
+**Provisional GLM launch choice:** SGLang 0.5.16, with vLLM 0.26.0 as a mandatory same-node challenger and fallback. This is not a measured winner declaration. The current SGLang release contains more GLM-5.2-specific work, while both engines have documented paths for the exact model. ([Hugging Face][1])
+
+Recommended baseline:
+
+```text
+Model:      zai-org/GLM-5.2-FP8@ba978f7
+Hardware:   8×B200 180GB
+Parallel:   TP8
+Context:    native 1,048,576
+Weights:    exact requested FP8 files
+KV cache:   BF16
+Caching:    disabled during qualification
+MTP/spec:   disabled during qualification
+Offload:    disabled
+```
+
+TensorRT-LLM 1.3.0rc23 and LMDeploy 0.15.0 should remain **qualification-only** for GLM. Their current documentation establishes generic GLM-5-family coverage, not the complete exact combination of `GLM-5.2-FP8`, BF16 KV, native one-million-token context, tokenizer/template parity, and stable streaming. TensorRT-LLM is also currently an RC release. ([GitHub][2])
+
+**One-GPU comparison model:** `Qwen/Qwen3-32B-FP8@aa55da1`, using one H100 80GB, TP1, native 32,768-token context, and BF16 KV. The official artifact is approximately 34.3GB and represents a materially fairer four-engine qualification lane than using an unsupported or converted model. ([Hugging Face][3])
+
+## Pricing conclusion
+
+At 70% productive utilization and a provisional 15% non-GPU overhead reserve, an 8×B200 node must sustain approximately:
+
+| Target                         | Lambda-like on-demand | CoreWeave-like on-demand |
+| ------------------------------ | --------------------: | -----------------------: |
+| Flex output, zero gross margin |          13,569 tok/s |             17,443 tok/s |
+| Flex output, 40% gross margin  |      **22,615 tok/s** |         **29,071 tok/s** |
+
+These are formula-derived whole-node gates based on current public rates, not engine-performance estimates. They exclude the possibility that actual storage, orchestration, failures, payment costs, or low utilization exceed the 15% placeholder. ([CoreWeave][4])
+
+Therefore:
+
+* **Do not commit to Flex at $1.80/M output.**
+* Treat Priority and Standard as private-alpha experiments.
+* Isolate Now traffic from delayed traffic or reserve hard headroom.
+* Require measured full COGS and deadline goodput before publishing binding completion windows.
+* Waiting creates scheduling and capacity optionality; it does not reduce the compute required by an unchanged request.
+
+## What was executed
+
+The package passed:
+
+* 10 unit tests.
+* 24/24 deterministic mock streaming requests.
+* Exact mock output self-comparison.
+* Python compilation.
+* YAML, JSON, and CSV validation.
+* Shell syntax validation.
+* Report/source-reference checks.
+* Cost-model regression checks.
+* ZIP integrity verification.
+
+**No NVIDIA GPU was exposed in the execution environment.** Consequently, SGLang, vLLM, TensorRT-LLM, and LMDeploy throughput, TTFT, TPOT, p99 latency, HBM use, utilization, power, long-context behavior, and fault recovery remain explicitly `NOT_MEASURED`. No unrelated public benchmark was substituted.
+
+## Recommended two-week experiments
+
+1. **Exact-support gate:** hash both immutable snapshots; qualify SGLang/vLLM on GLM and all four engines on Qwen; test native context, BF16 KV, streaming, cancellation, token accounting, and deterministic correctness. Record unsupported configurations rather than converting them.
+
+2. **Performance and full-COGS envelope:** execute batch-one, saturation, mixed-length, long-context, prefix-sharing, and burst tests with three randomized repetitions and equal tuning budgets. Select by cost per SLO-compliant token, not peak token throughput.
+
+3. **Delayed-window scheduler test:** compare immediate FIFO, isolated pools, and deadline/cache-aware scheduling under low load, sustained load, bursts, worker loss, restart, network degradation, and spot interruption.
+
+## Three-month recommendation
+
+Build around replaceable SGLang/vLLM backends rather than maintaining a permanent engine fork. The potentially proprietary layer is:
+
+* deadline-aware admission and scheduling;
+* tenant-safe cache-affinity routing;
+* phase-aware marginal cost estimation;
+* interruption-safe retries and duplicate suppression;
+* capacity selection across on-demand and interruptible supply;
+* continuous exact-model regression and autotuning.
+
+Continuous batching, paged KV memory, FlashAttention/FlashInfer, prefix caching, CUDA graphs, chunked prefill, MTP primitives, multi-GPU parallelism, and basic OpenAI-compatible serving are already commodity capabilities.
+
+The principal risk is that compatible delayed volume, cache reuse, utilization improvement, and interruptible-capacity savings are insufficient to overcome decode cost, warm-tail capacity, retries, failure reserve, and customer tail-latency requirements.
+
+[1]: https://huggingface.co/zai-org/GLM-5.2-FP8 "https://huggingface.co/zai-org/GLM-5.2-FP8"
+[2]: https://github.com/NVIDIA/TensorRT-LLM/releases/tag/v1.3.0rc23 "https://github.com/NVIDIA/TensorRT-LLM/releases/tag/v1.3.0rc23"
+[3]: https://huggingface.co/Qwen/Qwen3-32B-FP8/tree/main "https://huggingface.co/Qwen/Qwen3-32B-FP8/tree/main"
+[4]: https://www.coreweave.com/pricing "https://www.coreweave.com/pricing"

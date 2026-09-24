@@ -1,12 +1,12 @@
 export const siteConfig = {
 	name: 'Arcten',
-	title: 'Arcten | Long-horizon autonomous research and coding agents',
-	headline: 'Long-horizon autonomous research and coding agents.',
+	title: 'Arcten | Cost-effective inference for autonomous agents',
+	headline: 'The most cost-effective inference for autonomous agents.',
 	description:
-		'Arcten builds long-horizon autonomous research and coding agents, backed by Y Combinator with roots in AI research at Caltech and based in San Francisco.',
+		'Run popular open models or deploy your own with immediate inference when speed matters and lower rates when work can wait.',
 	url: 'https://arcten.com',
 	twitterHandle: '@arcteninc',
-	contentWidth: '560px'
+	contentWidth: '1120px'
 } as const;
 
 export const organizationJsonLd = {

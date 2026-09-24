@@ -1,0 +1,854 @@
+# GLM-5.2 FP8 deployment economics
+
+**Research cutoff: August 1, 2026.**
+
+## 1. Executive conclusion
+
+Arcten should **not commit to the proposed four-tier price card for unrestricted GLM-5.2 traffic**.
+
+The exact `zai-org/GLM-5.2-FP8` checkpoint is a 756 GB, 141-shard artifact. It is approximately 743–753 billion total parameters, with about 39 billion active parameters per token, a 1,048,576-token configured context, and MIT licensing. It requires an eight-accelerator high-memory replica for a practical single-node deployment; “39B active” reduces arithmetic but not model-residency cost. ([Hugging Face][1])
+
+**The thesis is directionally correct but incomplete:** willingness to wait creates savings only when it lets Arcten:
+
+* raise useful fleet utilization,
+* select materially cheaper capacity,
+* improve prefix/cache affinity,
+* avoid keeping separate underfilled replicas,
+* or shift work to a better workload-specific serving profile.
+
+Waiting does **not** make the model intrinsically cheaper. On the published eight-B200 curve, increasing concurrency from 256 to 1,024 reduced total throughput by about 19%, from 40,176 to 32,472 tokens/s, while increasing the completion proxy from 52 seconds to 227 seconds. Deeper batching beyond the throughput optimum makes both economics and latency worse. ([GitHub][2])
+
+### Price-tier verdict
+
+| Tier                                 | Verdict                                        | Conditions required                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------ | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Now** — $1.40 / $0.26 / $4.40      | **Sustainable for selected traffic**           | High utilization; B200 or cheap H200; balanced, prefill-heavy, or genuinely cache-heavy requests; admission control on output-heavy traffic. The price exactly matches Z.ai’s current retail GLM-5.2 API price, so it leaves no room for Arcten to be operationally mediocre. ([Overview - Z.AI DEVELOPER DOCUMENT][3]) |
+| **Priority** — $0.70 / $0.18 / $3.00 | **Conditional**                                | Sustainable on eight B200s near the measured concurrency-256 optimum, or on cheap H200 capacity. It is not sustainable on on-demand H200s for typical balanced traffic and is unsafe for decode-heavy requests.                                                                                                         |
+| **Standard** — $0.50 / $0.12 / $2.50 | **Borderline**                                 | At the public B200 concurrency-256 point, on-demand gross margin is only about 12%. A 20% throughput shortfall makes the tier loss-making. The best public high-throughput H200 result also has 327-second p95 completion, missing a five-minute p95. ([GPU Stack][4])                                                  |
+| **Flex** — $0.40 / $0.08 / $1.80     | **Not sustainable as a universal fixed price** | Requires sustained queues, predominantly spot or similarly cheap contracted supply, and prefill/cache-heavy traffic. It needs no hard deadline and should exclude or surcharge output-heavy requests.                                                                                                                   |
+
+The largest problem is **decode economics**. An exact H200 test with approximately 1K input and 2K output tokens produced only 2,267 total tokens/s across eight H200s. After crediting the proposed input price, the required output price is approximately:
+
+* **$11.74–$12.24/M** on on-demand H200,
+* **$6.38–$6.88/M** at the listed RunPod H200 price,
+* **$4.38–$4.96/M** on CoreWeave spot H200.
+
+The proposed $1.80–$4.40 output prices therefore cannot cover unrestricted generation-heavy traffic. ([GPU Stack][4])
+
+---
+
+# 2. Verified model artifact
+
+## Architecture and precision
+
+| Property                         | Verified value                                                                                 |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Repository                       | `zai-org/GLM-5.2-FP8`                                                                          |
+| Pinned repository state examined | `ba978f7`                                                                                      |
+| Artifact size                    | 756 GB, 141 safetensor shards                                                                  |
+| Architecture                     | `GlmMoeDsaForCausalLM`                                                                         |
+| Total parameters                 | Public sources disagree: Hugging Face metadata reports 753B; vLLM describes approximately 743B |
+| Active parameters                | Approximately 39B                                                                              |
+| Layers                           | 78 primary layers plus one next-token-prediction/MTP layer                                     |
+| Dense layers                     | First three                                                                                    |
+| Hidden size                      | 6,144                                                                                          |
+| Attention heads                  | 64                                                                                             |
+| Routed experts                   | 256                                                                                            |
+| Shared experts                   | 1                                                                                              |
+| Experts selected/token           | 8                                                                                              |
+| MoE intermediate size            | 2,048                                                                                          |
+| Router precision                 | FP32                                                                                           |
+| KV LoRA rank                     | 512                                                                                            |
+| IndexShare                       | Top-2,048 indexing, shared every four layers                                                   |
+| Vocabulary                       | 154,880                                                                                        |
+| Configured maximum context       | 1,048,576 tokens                                                                               |
+| Weight format                    | FP8 E4M3, 128×128 blocks, dynamic activation quantization                                      |
+| Higher-precision components      | Numerous modules are explicitly excluded from FP8 conversion; base config dtype is BF16        |
+| License                          | MIT                                                                                            |
+
+The model-card description says IndexShare reduces per-token FLOPs by 2.9× at one million context and reports up to a 20% increase in MTP acceptance length. Those are architectural claims, not end-to-end serving cost reductions. ([Hugging Face][5])
+
+### Identity contract Arcten should enforce
+
+A customer requesting exact GLM-5.2 FP8 should receive a SKU defined by:
+
+1. Repository and immutable commit hash.
+2. Hashes of all 141 weight shards.
+3. Exact tokenizer files and vocabulary.
+4. Exact chat template.
+5. Exact generation configuration.
+6. Weight precision and KV-cache precision, listed separately.
+7. Engine build, kernel build, and serving configuration.
+8. Context limit actually exposed by Arcten.
+
+A changed tokenizer, chat template, checkpoint revision, NVFP4 conversion, MXFP4 conversion, or different KV precision is not the same product contract.
+
+## Supported engines
+
+The model card lists SGLang 0.5.13.post1+, vLLM 0.23+, Transformers, KTransformers, Unsloth, and Ascend-oriented engines. As of August 1, current releases are vLLM 0.26.0 and SGLang 0.5.16. However, the strongest public benchmark data was generated using older pinned releases or development commits. Arcten should not assume that “latest” is faster or equally correct without rerunning the suite. Recent SGLang patch releases contain multiple GLM-5.2-specific correctness fixes, including IndexShare fixes for disaggregation and context parallelism. ([Hugging Face][6])
+
+---
+
+# 3. Precision and equivalence categories
+
+| Technique                                                                              | Correct category                                   | Qualification                                                                                                     |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Same pinned checkpoint, tokenizer, template, precision, backend, deterministic kernels | Potentially **bitwise identical**                  | Difficult to preserve across GPU architectures, driver versions, kernels, or different parallel reduction orders. |
+| Tensor, expert, or data parallel execution                                             | **Mathematically equivalent** in ideal arithmetic  | Normally not bitwise identical because floating-point reductions are non-associative.                             |
+| Continuous batching, paged KV, CUDA graphs, chunked prefill                            | Generally **mathematically equivalent**            | Subject to backend correctness and the same arithmetic/KV precision.                                              |
+| Prefix caching with unchanged cached tensors and KV dtype                              | Generally **mathematically equivalent**            | Cache-key canonicalization, template changes, tenant separation, and backend changes can invalidate equivalence.  |
+| Proper target-verified MTP/speculative decoding                                        | **Distribution-preserving**                        | Only if rejected tokens are handled correctly. It is not bitwise identical under sampling.                        |
+| FP8 KV cache instead of BF16 KV cache                                                  | **Lossy approximation**                            | The weights remain the exact FP8 checkpoint, but the serving computation changes.                                 |
+| NVFP4, MXFP4, W4A8, AWQ, GGUF, or other converted weights                              | **Lossy approximation and a different checkpoint** | Must not be represented as equivalent to `zai-org/GLM-5.2-FP8`.                                                   |
+
+This distinction matters because the best public H200 throughput configuration uses FP8 KV cache. GPUStack’s 200-example GSM8K check produced 97.5% for BF16 KV and 98.0% for FP8 KV, but 200 examples are far too few to establish distribution preservation across long-context, coding, tool-use, and multilingual workloads. ([GPU Stack][4])
+
+The public B200 benchmark also fixes speculative-decoding acceptance lengths through environment variables at lower concurrency. That makes the throughput experiment reproducible, but it does **not** establish the real model’s production acceptance distribution or correctness. ([GitHub][2])
+
+---
+
+# 4. Evidence table
+
+## Exact-checkpoint throughput
+
+All figures below use the exact FP8 checkpoint unless noted. “Completion proxy” is:
+
+[
+\text{TTFT} + \text{OSL}\times\text{TPOT}
+]
+
+It is not a tail-latency measurement.
+
+### Eight B200s, SGLang, random 8K input / 1K output
+
+| Concurrency | System throughput |      TTFT |     TPOT | Completion proxy | Notes                                                               |
+| ----------: | ----------------: | --------: | -------: | ---------------: | ------------------------------------------------------------------- |
+|           1 |       2,304 tok/s |   0.757 s |  3.22 ms |           4.05 s | Simulated MTP acceptance                                            |
+|          16 |      11,808 tok/s |   3.188 s |  9.12 ms |          12.53 s | Simulated MTP acceptance                                            |
+|          64 |      24,624 tok/s |   5.742 s | 17.65 ms |          23.82 s | Simulated MTP acceptance                                            |
+|         256 |  **40,176 tok/s** |  18.744 s | 32.61 ms |      **52.14 s** | Best measured throughput point                                      |
+|       1,024 |      32,472 tok/s | 177.620 s | 47.99 ms |         226.76 s | No speculative decoding; 19.2% less throughput than concurrency 256 |
+
+The source uses real weights, exact token lengths, cache flushing, 64 warm-up requests, TP8, and a pinned SGLang development commit. It does not report repeated-run variance, p95/p99 latency, GPU utilization, power, or HBM usage. ([GitHub][2])
+
+### Eight H200s, GPUStack
+
+| Workload             | Baseline total TPS | Optimized total TPS |                         Output TPS |        p95 completion | Main result                                    |
+| -------------------- | -----------------: | ------------------: | ---------------------------------: | --------------------: | ---------------------------------------------- |
+| 8K input / 1K output |           5,481.90 |       **17,525.76** |                           1,944.77 |          **327.25 s** | +219.7%, but five-minute p95 missed            |
+| 1K / 128             |          13,196.90 |           18,276.60 | Not separately reported in summary | Not central to result | +38.5%                                         |
+| 32K / 100            |          10,513.68 |       **26,433.15** |                              82.32 |               76.27 s | +151.4%; strongly prefill-bound                |
+| 1K / 2K              |           2,268.18 |        **2,267.33** |                           1,505.53 |              102.79 s | No economic benefit from the optimized profile |
+| ShareGPT             |           6,040.94 |        **2,845.48** |                        Not central |              162.23 s | 52.9% regression                               |
+
+The optimized configuration uses TP8, DP8, data-parallel attention, DeepEP, a 256-request cap, and FP8 KV cache. The source explicitly characterizes the result as a scenario-specific local optimum. ([GPU Stack][4])
+
+### Other exact-weight measurements
+
+| Hardware  | Configuration               | Best relevant point                                                               | Assessment                                                            |
+| --------- | --------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 4× GB300  | TP4, 8K/1K, concurrency 256 | 27,216 system tok/s; 27.49 s TTFT; 48.43 ms TPOT; approximately 77.1 s completion | Strong exact-checkpoint result, but no public price.                  |
+| 4× GB300  | TP4, concurrency 1,024      | 24,156 system tok/s; approximately 319 s completion                               | Throughput declines past the concurrency-256 point.                   |
+| 8× MI355X | TP8, concurrency 256        | 8,352 system tok/s; approximately 175 s completion                                | Much slower than B200; no MTP.                                        |
+| 8× MI355X | TP8, concurrency 1,024      | 10,152 system tok/s; approximately 541 s completion                               | Best raw throughput shown, but unsuitable for five-minute completion. |
+
+The GB300 lower-concurrency results use simulated MTP acceptance. MI355X measurements explicitly disable MTP and therefore are not directly comparable to the NVIDIA low-latency profiles. ([GitHub][2])
+
+## Optimization evidence
+
+| Optimization                                 | Quality category                                                       | Applicable setup                                         | Measured effect                                                | Latency / tails                               | Memory and utilization                     | Maturity and difficulty                                        | Interaction / disconfirming evidence                                                                                                                     |
+| -------------------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DP-attention + DeepEP + request cap + FP8 KV | **Lossy bundle** because KV changes from BF16 to FP8                   | Exact checkpoint, 8×H200, long/high-concurrency traffic  | 5,482 → 17,526 total TPS on 8K/1K                              | p95 327 s; p95 TTFT 235 s                     | Not fully reported                         | Medium production maturity; moderate tuning complexity         | No improvement on 1K/2K; 53% regression on ShareGPT. One global profile is unsafe. ([GPU Stack][4])                                                      |
+| Chunked prefill                              | Mathematically equivalent under same precision                         | Long prompts and mixed prefill/decode                    | Material benefit in the published balanced recipes             | Can reduce TTFT when chunk is well tuned      | Consumes scheduling and KV headroom        | Commodity; tuning difficulty moderate                          | Oversized chunks can starve decode; little value for generation-heavy traces.                                                                            |
+| MTP/EAGLE                                    | Distribution-preserving if verification is correct                     | Models and workloads with sufficient draft acceptance    | Embedded in B200/GB300 low and balanced profiles               | Acceptance controls user TPS and TPOT         | Additional draft state and graph capture   | Medium; correctness-sensitive                                  | B200 public figures use simulated acceptance, so production savings remain unverified. ([GitHub][2])                                                     |
+| Prefill/decode disaggregation                | Mathematically equivalent with exact KV transfer; FP8 KV remains lossy | Long cached prompts with sufficient scale and InfiniBand | H200 system output rises from 54.55 to 68.86 tok/s/GPU, +26.2% | Median TTFT worsens slightly, 1.790 → 1.874 s | Minimum replica doubles from 8 to 16 H200s | High engineering and operational complexity                    | Can lower cost/token at saturation, but worsens minimum-scale and idle economics. Trace was deliberately 64K/400 with 90% cache hits. ([NVIDIA Docs][7]) |
+| KV-aware routing and prefix caching          | Mathematically equivalent if cache contents and dtype match            | Repeated prefixes and agentic traces                     | NVIDIA trace shows high cache-heavy throughput                 | Dependent on routing locality                 | Requires cache memory or offload           | Commodity mechanism; proprietary fleet implementation possible | A 90% synthetic/trace cache hit cannot be assumed for ordinary API traffic. ([NVIDIA Docs][7])                                                           |
+
+### Confidence
+
+No public B200, GB300, or MI355X result provides a statistical confidence interval. Several are single-point measurements and some control MTP acceptance synthetically. For planning, a **−20% throughput / +25% cost-per-token envelope** is more defensible than treating the published point estimates as a production forecast.
+
+---
+
+# 5. Hardware deployment matrix
+
+| Hardware               | Exact FP8 fit                                                                                                                                       | Credible exact throughput                                                                                                                  | Topology and recommendation                                                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **H100 80 GB**         | Eight GPUs provide 640 GB, below the 756 GB artifact.                                                                                               | None found for this exact checkpoint.                                                                                                      | Practical deployment would require at least two nodes, generally 16 GPUs, or weight offload. Cross-node TP/EP adds substantial communication. Do not promise.                                |
+| **H200 141 GB**        | Yes, eight-GPU single node. NVIDIA NIM lists an eight-H200 exact FP8 profile.                                                                       | Yes; GPUStack and NVIDIA Dynamo.                                                                                                           | Best near-term engineering platform because it is available and well characterized. Use NVSwitch intra-node. Limit initial context to a validated band, not 1M. ([NVIDIA Docs][8])           |
+| **B200 180 GB**        | Yes, eight-GPU single node.                                                                                                                         | Yes; strongest public exact-weight synthetic throughput.                                                                                   | Preferred for high-volume balanced traffic. vLLM says full 1M is reachable using FP8 KV, but there are no credible one-million-token production tail measurements. ([vLLM Recipes][9])       |
+| **GB200 NVL72**        | A public 4-GPU slice has 744 GB total HBM, slightly below the 756 GB artifact before runtime overhead.                                              | None found.                                                                                                                                | At least eight GB200 GPUs within an NVL72 should fit, but exact throughput and economics are unverified. A four-GPU commercial slice is not viable for the exact artifact. ([CoreWeave][10]) |
+| **GB300**              | Yes; four GPUs have ample HBM.                                                                                                                      | Yes, exact TP4 measurements.                                                                                                               | Technically attractive. Public hourly price is unavailable, so no firm economic verdict.                                                                                                     |
+| **B300**               | Yes.                                                                                                                                                | Exact-weight benchmark remains marked pending in the SGLang source.                                                                        | Spot pricing exists, but do not use NVFP4 B300 throughput as evidence for exact FP8. ([GitHub][2])                                                                                           |
+| **MI300X / MI325X**    | Exact FP8 TP8 recipes exist and the checkpoint should fit.                                                                                          | No credible exact-checkpoint throughput result found. MI325X recipes are marked unverified.                                                | Experimental only until Arcten produces its own benchmark and correctness data. ([GitHub][11])                                                                                               |
+| **MI355X**             | Yes.                                                                                                                                                | Yes, exact SGLang data.                                                                                                                    | Current public result is materially slower than B200 and disables MTP. Consider only with a sufficiently low contracted hourly rate.                                                         |
+| **TPU v7x-32**         | Experimental evidence exists.                                                                                                                       | Insufficient for comparison: issue data reports TTFT/ITL but not complete token throughput, and describes full MLA rather than sparse DSA. | Do not make economic or equivalence claims. The cited prototype reports approximately 18-minute cold loads and is not a production release benchmark. ([GitHub][12])                         |
+| **H20**                | Supported by NIM/vLLM on eight GPUs.                                                                                                                | No credible exact throughput found.                                                                                                        | Regional/procurement-specific; benchmark before considering. ([NVIDIA Docs][8])                                                                                                              |
+| **RTX Pro 6000 96 GB** | Eight GPUs have 768 GB nominal HBM, leaving essentially no runtime or KV headroom. NIM recommends more than 900 GB aggregate for generic exact FP8. | None.                                                                                                                                      | Not a viable production exact-weight target without offload or additional GPUs. ([NVIDIA Docs][8])                                                                                           |
+| **Ascend**             | Model card lists supported inference frameworks.                                                                                                    | No reproducible exact economics found.                                                                                                     | Experimental; no customer commitment. ([Hugging Face][6])                                                                                                                                    |
+
+## Parallelism and interconnect
+
+For H200 and B200, the safest starting point is an eight-GPU NVSwitch node with TP8. At higher concurrency, data-parallel attention and expert communication through DeepEP can improve prefill-heavy throughput, but the H200 evidence shows that those settings are not universally beneficial.
+
+Cross-node H100, prefill/decode disaggregation, or large context-parallel deployments require high-bandwidth RDMA/InfiniBand. NVIDIA’s exact H200 disaggregated recipe transfers KV state over NIXL/UCX on InfiniBand and doubles the minimum replica from 8 to 16 GPUs. ([NVIDIA Docs][7])
+
+A silent fallback from RDMA to TCP should be treated as a production fault, not a degraded but acceptable operating mode. MoE expert exchange and KV movement can otherwise dominate execution time.
+
+---
+
+# 6. Complete cost model
+
+## Assumptions
+
+The tables use this base planning model:
+
+[
+\text{Loaded node-hour} =
+R
+\times
+\frac{(1+0.05_{\text{infra}})
+(1+0.05_{\text{failure}})}
+{0.85_{\text{useful utilization}}
+(1-0.03_{\text{payment}})}
+]
+
+This equals:
+
+[
+1.337174 \times R
+]
+
+where (R) is the raw accelerator-node hourly price.
+
+The included allowances are:
+
+* CPU, RAM, storage, networking, and orchestration: 5%.
+* Interruption, retry, failure, loading, and warm-tail reserve: 5%.
+* Useful utilization: 85%.
+* Payment/provider collection overhead: 3%.
+
+A stress case with 75% useful utilization and a 15% failure/interruption allowance produces:
+
+[
+1.659794 \times R
+]
+
+These are assumptions, not measured GLM-5.2 overheads. Arcten should replace each with telemetry from its experiments. Cloud credits are excluded.
+
+### Current public rates used
+
+| Resource                   |               Raw hourly price |
+| -------------------------- | -----------------------------: |
+| CoreWeave 8×B200 on-demand |                         $68.80 |
+| CoreWeave 8×B200 spot      |                  $34.11–$34.87 |
+| CoreWeave 8×H200 on-demand |                         $50.44 |
+| CoreWeave 8×H200 spot      |                  $20.64–$20.93 |
+| RunPod B200 listing        | $5.98/GPU, or $47.84 for eight |
+| RunPod H200 listing        | $3.59/GPU, or $28.72 for eight |
+
+CoreWeave prices describe complete multi-GPU instances. RunPod’s per-GPU listing does not by itself guarantee simultaneous availability of eight GPUs in the required NVSwitch topology; it is therefore an optimistic price floor, not a procurement commitment. ([CoreWeave][10])
+
+### Loaded hourly costs
+
+| Node                        | Base loaded cost |
+| --------------------------- | ---------------: |
+| 8×B200 CoreWeave on-demand  |         $92.00/h |
+| 8×B200 CoreWeave spot       |  $45.61–$46.63/h |
+| 8×B200 RunPod listing floor |         $63.97/h |
+| 8×H200 CoreWeave on-demand  |         $67.45/h |
+| 8×H200 CoreWeave spot       |  $27.60–$27.99/h |
+| 8×H200 RunPod listing floor |         $38.40/h |
+
+## Loading and compilation
+
+The checkpoint itself is 756 GB. A restart incurs:
+
+[
+\text{Restart cost} =
+R\times\frac{\text{load minutes}}{60}
++\text{lost work}
++\text{retry compute}
++\text{warm-up/compilation compute}
+]
+
+Do not insert a generic loading time. It depends on local NVMe caching, network storage, sharding, engine, and kernel compilation. The TPU prototype’s approximately 18-minute load demonstrates the possible magnitude but is not transferable to H200 or B200. ([GitHub][12])
+
+---
+
+# 7. B200 break-even economics
+
+For the measured 8K-input/1K-output workload with no cache hits, the price per million total tokens is:
+
+[
+P_{\text{weighted}}=\frac{8P_{\text{input}}+P_{\text{output}}}{9}
+]
+
+| Tier     | Weighted gross price/M total tokens |
+| -------- | ----------------------------------: |
+| Now      |                              $1.733 |
+| Priority |                              $0.956 |
+| Standard |                              $0.722 |
+| Flex     |                              $0.556 |
+
+## Break-even gross price per million total tokens
+
+| Concurrency | System TPS | Completion proxy | CW on-demand |           CW spot | RunPod floor |
+| ----------: | ---------: | ---------------: | -----------: | ----------------: | -----------: |
+|           1 |      2,304 |           4.05 s |      $11.092 |     $5.499–$5.622 |       $7.712 |
+|          16 |     11,808 |          12.53 s |       $2.164 |     $1.073–$1.097 |       $1.505 |
+|          64 |     24,624 |          23.82 s |       $1.038 |     $0.515–$0.526 |       $0.722 |
+|         256 | **40,176** |      **52.14 s** |   **$0.636** | **$0.315–$0.322** |   **$0.442** |
+|       1,024 |     32,472 |         226.76 s |       $0.787 |     $0.390–$0.399 |       $0.547 |
+
+Calculated from the SGLang exact-weight results and current rates. ([GitHub][2])
+
+### Gross margin at concurrency 256
+
+| Tier     | CW on-demand |    CW spot | RunPod floor |
+| -------- | -----------: | ---------: | -----------: |
+| Now      |        63.3% | 81.4–81.8% |        74.5% |
+| Priority |        33.4% | 66.3–67.0% |        53.7% |
+| Standard |    **11.9%** | 55.4–56.3% |        38.8% |
+| Flex     |   **−14.5%** | 42.0–43.2% |        20.4% |
+
+These margins are before payroll, R&D, sales, customer support, taxes, and corporate overhead.
+
+### Sensitivity
+
+* A 20% throughput shortfall raises the on-demand concurrency-256 break-even from $0.636 to **$0.795/M**. Standard then loses money.
+* At the RunPod listing floor, the same haircut raises break-even from $0.442 to **$0.553/M**, almost exactly Flex’s $0.556 gross price. That leaves effectively no risk or operating margin.
+* At concurrency 16, even spot capacity only supports Now. Priority, Standard, and Flex are below break-even.
+* At concurrency 1, no proposed tier is remotely viable.
+
+## Workload-state implications
+
+| State                         | Economic result                                                                                                                                                                                                                                                                          |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Low load**                  | The eight-GPU minimum replica dominates. Queue windows cannot repair a fleet with too little demand.                                                                                                                                                                                     |
+| **Burst**                     | Concurrency 64 can be economic on spot, but on-demand supports only Now at the measured 8K/1K mix.                                                                                                                                                                                       |
+| **Sustained compatible load** | Concurrency around 256 is the public optimum and can support Now, Priority, and narrowly Standard on on-demand B200.                                                                                                                                                                     |
+| **Excessive queue depth**     | Concurrency 1,024 has worse throughput and much worse latency than concurrency 256.                                                                                                                                                                                                      |
+| **Failure-stress case**       | Flex at concurrency 256 requires an effective raw node rate below about $48.41/h. With CoreWeave’s current $68.80 on-demand and $34.11 spot prices, at least approximately 59% of capacity hours must be spot. At concurrency 1,024, the required spot share rises to approximately 86%. |
+
+---
+
+# 8. H200 prefill and decode economics
+
+## Workload throughput
+
+| Workload              | Input TPS | Output TPS | Total TPS | Interpretation                    |
+| --------------------- | --------: | ---------: | --------: | --------------------------------- |
+| 8K/1K balanced        | 15,580.99 |   1,944.77 | 17,525.76 | Mixed prefill/decode              |
+| 32K/100 prefill-heavy | 26,350.83 |      82.32 | 26,433.15 | Almost entirely prefill economics |
+| 1K/2K decode-heavy    |    761.80 |   1,505.53 |  2,267.33 | Decode economics dominate         |
+
+Derived from the exact H200 benchmark. ([GPU Stack][4])
+
+## Revenue per node-hour at proposed prices
+
+| Workload              |     Now | Priority | Standard |   Flex |
+| --------------------- | ------: | -------: | -------: | -----: |
+| Balanced 8K/1K        | $109.33 |   $60.27 |   $45.55 | $35.04 |
+| Prefill-heavy 32K/100 | $134.11 |   $67.29 |   $48.17 | $38.48 |
+| Decode-heavy 1K/2K    |  $27.69 |   $18.18 |   $14.92 | $10.85 |
+
+Compare those figures with loaded H200 costs of $67.45/h on-demand, $38.40/h at the RunPod listing floor, and $27.60–$27.99/h on spot.
+
+### Result
+
+* **Balanced on-demand H200:** only Now covers loaded COGS.
+* **Balanced RunPod floor:** Now, Priority, and Standard cover; Flex fails.
+* **Balanced spot:** all four cover, but Flex has only about 20% gross infrastructure margin.
+* **Prefill-heavy on-demand:** Now covers; Priority is effectively break-even before uncertainty.
+* **Decode-heavy on-demand or RunPod:** every tier fails.
+* **Decode-heavy spot:** Now only approximately breaks even at the cheapest listed spot rate; all discounted tiers fail.
+
+## Phase-only COGS ceilings
+
+The following allocates the entire node cost to one token class. These are useful upper bounds but must **not** be added together, because prefill and decode share the same node execution interval.
+
+| Workload              | Capacity provider | Input-only COGS/M | Output-only COGS/M |
+| --------------------- | ----------------- | ----------------: | -----------------: |
+| Balanced 8K/1K        | H200 on-demand    |            $1.202 |             $9.634 |
+|                       | H200 spot         |            $0.499 |             $3.997 |
+|                       | RunPod floor      |            $0.685 |             $5.485 |
+| Prefill-heavy 32K/100 | H200 on-demand    |            $0.711 |           $227.591 |
+|                       | H200 spot         |            $0.295 |            $94.439 |
+|                       | RunPod floor      |            $0.405 |           $129.588 |
+| Decode-heavy 1K/2K    | H200 on-demand    |           $24.593 |            $12.444 |
+|                       | H200 spot         |           $10.205 |             $5.164 |
+|                       | RunPod floor      |           $14.003 |             $7.086 |
+
+The apparently extreme “output-only” number for 32K/100 is expected: the node performs substantial prefill work while producing very few output tokens.
+
+## Required output price for decode-heavy traffic
+
+After crediting the input tokens at each proposed input price:
+
+| Capacity                  |           Now |      Priority |      Standard |          Flex |
+| ------------------------- | ------------: | ------------: | ------------: | ------------: |
+| H200 on-demand            |       $11.736 |       $12.090 |       $12.191 |       $12.242 |
+| H200 spot                 | $4.384–$4.455 | $4.738–$4.810 | $4.839–$4.911 | $4.890–$4.961 |
+| RunPod H200 floor         |        $6.377 |        $6.731 |        $6.833 |        $6.883 |
+| **Proposed output price** |     **$4.40** |     **$3.00** |     **$2.50** |     **$1.80** |
+
+This is the strongest reason not to expose the proposed prices without workload controls.
+
+Possible controls include:
+
+* an output-heavy surcharge,
+* a minimum compute charge,
+* lower maximum output limits at discounted tiers,
+* separate reasoning/non-reasoning SKUs,
+* or queue admission based on predicted decode work.
+
+---
+
+# 9. Cached-input economics
+
+NVIDIA’s exact H200 Dynamo benchmark uses:
+
+* 64K input,
+* 400 output tokens,
+* 90% KV-cache hit rate,
+* eight H200s for the aggregated deployment,
+* 54.55 output tok/s/GPU,
+* FP8 weights and FP8 KV cache. ([NVIDIA Docs][7])
+
+For modeling only, assume the 90% cache hit corresponds exactly to billable cached input:
+
+* 6,400 uncached input tokens/request,
+* 57,600 cached input tokens/request,
+* 400 output tokens/request.
+
+That produces approximately:
+
+* 3,927.6 requests/node-hour,
+* 25.14M uncached input tokens/hour,
+* 226.23M cached tokens/hour,
+* 1.57M output tokens/hour.
+
+## Revenue per node-hour
+
+| Tier     | Revenue/hour |
+| -------- | -----------: |
+| Now      |      $100.92 |
+| Priority |       $63.03 |
+| Standard |       $43.64 |
+| Flex     |       $30.98 |
+
+### Capacity result
+
+| Capacity                        | Now  | Priority | Standard | Flex       |
+| ------------------------------- | ---- | -------- | -------- | ---------- |
+| H200 on-demand, $67.45 loaded   | Pass | Fail     | Fail     | Fail       |
+| RunPod floor, $38.40 loaded     | Pass | Pass     | Pass     | Fail       |
+| H200 spot, $27.60–$27.99 loaded | Pass | Pass     | Pass     | Pass, thin |
+
+The required cached-token price after crediting uncached input and output is:
+
+| Capacity              |        Now | Priority | Standard |   Flex |
+| --------------------- | ---------: | -------: | -------: | -----: |
+| H200 on-demand        |     $0.112 |   $0.200 |   $0.225 | $0.241 |
+| RunPod floor          | Below zero |   $0.071 |   $0.097 | $0.113 |
+| Proposed cached price |     $0.260 |   $0.180 |   $0.120 | $0.080 |
+
+Thus the proposed cached prices are sustainable on on-demand H200 only for Now, and on the RunPod floor for Now through Standard.
+
+This result is highly conditional. NVIDIA’s “90% KV hit” is a serving trace property and may not map exactly to Arcten’s billable-cache definition. Lower cache hits would both reduce the number of discounted tokens and likely lower serving throughput. The trace is also deliberately shaped to demonstrate KV-aware routing and caching. ([NVIDIA Docs][7])
+
+---
+
+# 10. What is already commodity
+
+The following are not defensible core differentiation by themselves:
+
+| Commodity capability                                     | Status                                                     |
+| -------------------------------------------------------- | ---------------------------------------------------------- |
+| Continuous batching                                      | Standard in SGLang, vLLM, TensorRT-LLM and related engines |
+| Paged KV management                                      | Standard                                                   |
+| Prefix/radix caching                                     | Standard                                                   |
+| FlashAttention, FlashInfer and sparse-attention kernels  | Standard engine/kernel work                                |
+| CUDA graph capture                                       | Standard                                                   |
+| TP, EP, pipeline parallelism and data-parallel attention | Standard                                                   |
+| Chunked prefill                                          | Standard                                                   |
+| Multi-token/speculative decoding                         | Standard model/engine capability                           |
+| OpenAI-compatible serving API                            | Standard                                                   |
+| Basic prefill/decode disaggregation                      | Available in upstream serving stacks                       |
+| Basic spot-instance use and fallback                     | Cloud operations, not a technical moat                     |
+| Static “send Flex traffic to cheaper capacity” routing   | Easy to reproduce                                          |
+
+Arcten can still execute these better, but the moat would be operational data and control quality rather than possession of the mechanisms.
+
+---
+
+# 11. What could become proprietary
+
+The defensible layer is a **deadline-, workload-, and cost-aware fleet controller**:
+
+1. **Artifact identity enforcement.** Prove checkpoint, tokenizer, template, context, KV precision, and engine configuration for every completion.
+
+2. **Workload-specific profile selection.** Predict prefill/decode ratio, likely output length, cacheability, MTP acceptance, memory occupancy, and best serving configuration. The H200 ShareGPT and decode-heavy regressions show why one static profile is unsafe.
+
+3. **Deadline-aware admission and batch cutoff.** Stop accumulating work at the concurrency/queue depth where marginal throughput declines. The B200 c256-to-c1024 regression is the canonical example.
+
+4. **Per-request cost floors.** Estimate marginal and allocated cost before accepting a discounted request, with separate prefill, decode, KV, retry, and reserve components.
+
+5. **Cache-affinity routing across a global fleet.** Include prefix canonicalization, tenant isolation, cache-value prediction, state migration, and cache-aware failover.
+
+6. **Interruption prediction and state-aware recovery.** Decide whether to place a request on spot based on remaining completion window, KV state size, checkpoint warmness, and fallback capacity.
+
+7. **Automatic correctness gates.** Detect engine or kernel releases that change outputs, routing, long-context behavior, tool parsing, or speculative-verification correctness.
+
+8. **Empirical price curves.** Learn actual cost distributions by workload, hardware, engine, region, time of day, and completion window rather than publishing a single assumed batching discount.
+
+---
+
+# 12. Three experiments Arcten can run within two weeks
+
+## Experiment 1: Exact-checkpoint performance and correctness matrix
+
+**Hardware:** one eight-H200 node and one eight-B200 node.
+
+**Configurations:**
+
+* SGLang benchmark-pinned commit.
+* SGLang 0.5.16.
+* vLLM 0.26.0.
+* BF16 KV and FP8 KV reported separately.
+* TP8 baseline.
+* TP8 + DP-attention/DeepEP.
+* MTP disabled and enabled.
+
+**Workloads:**
+
+* 1K/128.
+* 8K/1K.
+* 32K/100.
+* 1K/2K.
+* Real coding/agent traces.
+* Cache-hit sweeps of 0%, 50%, and 90%.
+* Concurrency 1, 16, 64, 256, and 1,024 where memory permits.
+
+**Required measurements:**
+
+* Input, cached-input and output TPS.
+* TTFT, TPOT, ITL and end-to-end p50/p95/p99.
+* Actual MTP acceptance.
+* HBM, SM utilization, power, CPU, RAM and network.
+* Load, compile and warm-up time.
+* At least five repeated benchmark runs.
+* Output-distribution tests and long-context retrieval/coding evaluations.
+
+**Acceptance criterion:** identify at least one profile that supports each offered workload band with a measured 25% infrastructure margin after the pessimistic confidence bound—not merely at the mean benchmark point.
+
+The upstream reproduction harness uses exact token lengths, `--random-range-ratio 1.0`, 64 warm-ups and `--flush-cache`. ([GitHub][11])
+
+## Experiment 2: Completion-window fleet replay
+
+Build a discrete-event replay using actual or synthesized request arrivals.
+
+Test:
+
+* low load,
+* sudden burst,
+* sustained load,
+* output-length estimation error,
+* correlated tenant traffic,
+* spot interruption,
+* on-demand fallback,
+* warm and cold replicas.
+
+Compare:
+
+* separate Now/Priority/Standard/Flex pools,
+* one shared deadline-aware pool,
+* concurrency cutoff at 256,
+* unconstrained batching to 1,024,
+* H200-only,
+* B200-only,
+* mixed H200/B200,
+* on-demand/spot blends.
+
+**Required outputs:**
+
+* COGS by token class.
+* SLO miss rates.
+* queue time and execution time separately.
+* idle/warm-tail cost.
+* number of replicas required.
+* spot share.
+* retries, wasted compute and lost KV work.
+* gross margin distribution, not only mean margin.
+
+**Acceptance criterion:** Standard must retain positive margin under a 20% throughput haircut and still meet the stated five-minute service definition. Flex must remain positive under the modeled interruption reserve.
+
+## Experiment 3: Cache correctness and failure recovery
+
+Create 4K, 32K and 128K shared prefixes with:
+
+* exact reuse,
+* one-token mutation,
+* chat-template mutation,
+* tenant changes,
+* tool-schema changes,
+* engine restart,
+* replica migration.
+
+Then inject:
+
+* GPU process failure,
+* whole-node termination,
+* spot interruption,
+* InfiniBand failure,
+* forced TCP fallback,
+* corrupted or stale cache metadata.
+
+Measure:
+
+* hit-rate accuracy,
+* cross-tenant isolation,
+* retry amplification,
+* KV rebuild cost,
+* restart time,
+* completion-window misses,
+* semantic and bitwise divergence,
+* cost per recovered request.
+
+**Acceptance criterion:** no cross-tenant cache use; no silent transport downgrade; an empirically justified failure reserve; and recovery that does not turn discounted work into negative-margin work.
+
+Credits may pay for these experiments but must not enter the reported steady-state COGS.
+
+---
+
+# 13. Three-month engineering recommendation
+
+## Month 1: establish truth
+
+* Pin the exact checkpoint and artifact hashes.
+* Complete the two-hardware benchmark/correctness matrix.
+* Measure real engine loading, compilation and restart behavior.
+* Establish separate product labels for BF16 KV and FP8 KV.
+* Produce cost curves by input length, output length, context occupancy, cache hit and concurrency.
+* Do not expose 1M context merely because the configuration permits it.
+
+## Month 2: build the control plane
+
+Implement:
+
+* deadline-aware admission,
+* workload classification,
+* output-length prediction,
+* profile selection,
+* cache-affinity routing,
+* concurrency cutoff optimization,
+* per-request cost accounting,
+* interruption-aware placement,
+* artifact identity and correctness telemetry.
+
+Use a shared fleet where possible. Four permanently separated pools would magnify the eight-GPU minimum-replica problem.
+
+## Month 3: private beta
+
+Launch a restricted exact-FP8 beta with:
+
+* H200 as the available baseline platform.
+* B200 for high-volume balanced/prefill traffic.
+* Now and Standard first.
+* Priority only after one-minute tail behavior is established.
+* Flex only as best effort with no hard deadline.
+* Validated context bands, such as ≤32K, ≤128K and a separately priced extended-context tier.
+* Maximum-output limits or output-heavy pricing.
+* Cached pricing only for cache hits actually observed by Arcten.
+* Explicit API metadata disclosing weight and KV precision.
+* No H100, GB200, MI300X/MI325X or TPU customer promise until Arcten has exact internal results.
+
+### Recommended commercial structure
+
+Do not use one global price card without guards. Use:
+
+[
+\text{Charge} =
+P_i I+
+P_c C+
+P_o O+
+\max(0,\text{compute minimum}-\text{token charge})
+]
+
+with possible modifiers for:
+
+* extended context,
+* predicted generation-heavy work,
+* strict deadline,
+* non-cacheable requests,
+* or unusually low batching compatibility.
+
+The public price can remain simple, but the admission system must reject or reprice requests whose predicted COGS exceeds the tier floor.
+
+Self-host the MIT checkpoint or obtain explicit OEM/wholesale rights. The model license permits use of the open artifact; it does not imply permission to resell a third party’s retail API account.
+
+---
+
+# 14. Explicit reasons the approach might fail
+
+1. **Decode is underpriced.** Long reasoning and coding outputs can cost several times the proposed output price.
+
+2. **The minimum efficient replica is large.** Each exact deployment ties up roughly eight high-memory accelerators, making low-load economics poor.
+
+3. **Demand may not be compatible enough to aggregate.** Different context bands, templates, deadlines, sampling settings and tenants reduce batching and cache affinity.
+
+4. **More waiting can reduce throughput.** The B200 result peaks at concurrency 256 and declines at 1,024.
+
+5. **Strict completion promises require reserve capacity.** Reserve capacity directly conflicts with the thesis of maximizing utilization.
+
+6. **Prefix-cache hits may be much lower than modeled.** Minor prompt, template, tool-schema or tenant changes can invalidate reuse.
+
+7. **Reasoning output lengths are difficult to predict.** A request admitted as cheap prefill work can become an expensive decode job.
+
+8. **Spot interruptions can destroy KV state and duplicate work.** A restart reserve may erase the nominal spot discount.
+
+9. **Checkpoint loading is substantial.** A 756 GB artifact makes rapid scale-up, migration and failure recovery expensive.
+
+10. **One-million-token serving has no adequate public tail evidence.** Configured support is not equivalent to reliable high-concurrency production support.
+
+11. **Serving profiles are workload-specific.** The H200 optimization improved 8K/1K by 220% but did nothing for 1K/2K and cut ShareGPT throughput by 53%.
+
+12. **Correctness failures can be silent.** Recent engine releases include GLM-5.2-specific fixes, including IndexShare, long-input and precision issues. ([GitHub][13])
+
+13. **MTP savings may not reproduce.** Public B200 figures use controlled simulated acceptance lengths rather than observed production acceptance.
+
+14. **Cheap capacity may not be available in the required topology.** A per-GPU listing does not guarantee an eight-GPU NVSwitch node.
+
+15. **Cloud price spreads may close.** Flex depends heavily on a persistent on-demand/spot or retail/wholesale price gap.
+
+16. **Table-stakes engine improvements are not a moat.** Upstream SGLang, vLLM and vendors can absorb the same kernel and scheduler techniques.
+
+17. **Provider resale may be prohibited or commercially unattractive.** Retail API pricing cannot be treated as wholesale supply.
+
+18. **The incumbent retail price is already aggressive.** Arcten’s Now target is exactly Z.ai’s current retail price, leaving execution risk entirely with Arcten. ([Overview - Z.AI DEVELOPER DOCUMENT][3])
+
+---
+
+# 15. Reproducible calculations
+
+```python
+from dataclasses import dataclass
+
+PRICES = {
+    "Now":      (1.40, 0.26, 4.40),
+    "Priority": (0.70, 0.18, 3.00),
+    "Standard": (0.50, 0.12, 2.50),
+    "Flex":     (0.40, 0.08, 1.80),
+}
+
+def loaded_node_hour(
+    raw_rate: float,
+    useful_utilization: float = 0.85,
+    infra_overhead: float = 0.05,
+    failure_reserve: float = 0.05,
+    payment_overhead: float = 0.03,
+) -> float:
+    if not 0 < useful_utilization <= 1:
+        raise ValueError("useful_utilization must be in (0, 1]")
+    if not 0 <= payment_overhead < 1:
+        raise ValueError("payment_overhead must be in [0, 1)")
+
+    return (
+        raw_rate
+        * (1 + infra_overhead)
+        * (1 + failure_reserve)
+        / (useful_utilization * (1 - payment_overhead))
+    )
+
+def revenue_per_hour(
+    input_tps: float,
+    cached_input_tps: float,
+    output_tps: float,
+    tier: str,
+) -> float:
+    input_price, cached_price, output_price = PRICES[tier]
+    return (
+        3600 / 1_000_000
+        * (
+            input_tps * input_price
+            + cached_input_tps * cached_price
+            + output_tps * output_price
+        )
+    )
+
+def break_even_per_million_total_tokens(
+    raw_rate: float,
+    total_tps: float,
+    **cost_assumptions,
+) -> float:
+    hourly_cost = loaded_node_hour(raw_rate, **cost_assumptions)
+    million_tokens_per_hour = total_tps * 3600 / 1_000_000
+    return hourly_cost / million_tokens_per_hour
+
+def required_output_price(
+    raw_rate: float,
+    input_tps: float,
+    output_tps: float,
+    credited_input_price: float,
+    **cost_assumptions,
+) -> float:
+    hourly_cost = loaded_node_hour(raw_rate, **cost_assumptions)
+    hourly_input_revenue = (
+        input_tps * 3600 / 1_000_000 * credited_input_price
+    )
+    output_millions_per_hour = output_tps * 3600 / 1_000_000
+    return (hourly_cost - hourly_input_revenue) / output_millions_per_hour
+```
+
+For reproduction of the SGLang synthetic benchmark:
+
+```bash
+python3 -m sglang.bench_serving \
+  --backend sglang \
+  --host localhost \
+  --port 30000 \
+  --model zai-org/GLM-5.2-FP8 \
+  --dataset-name random \
+  --random-input-len 8192 \
+  --random-output-len 1024 \
+  --random-range-ratio 1.0 \
+  --num-prompts 1000 \
+  --max-concurrency 256 \
+  --warmup-requests 64 \
+  --flush-cache
+```
+
+For the published balanced B200 profile, the serving flags include TP8, DP8, data-parallel attention, DeepEP, a 32,768-token chunked-prefill size, and a 256-request cap. Reproducing the source’s synthetic result also requires its controlled MTP-acceptance environment setting. That environment setting should **not** be used as evidence of production economics; run a second test with real observed acceptance. ([GitHub][11])
+
+## Final decision
+
+**Proceed with GLM-5.2 FP8 as a controlled private-beta workload, not as an unrestricted fixed-price product.**
+
+The economically defensible launch configuration is:
+
+* exact self-hosted checkpoint,
+* H200 and B200 only,
+* validated context bands,
+* Now plus a conditional Standard tier,
+* workload-aware admission,
+* output-heavy controls,
+* true-hit cached billing,
+* predominantly cheap capacity for discounted tiers,
+* and no strict five-minute promise until Arcten has internal p95/p99 evidence.
+
+The proposed prices can work for **sustained, balanced, prefill-heavy, or highly cacheable traffic**. They do not work across low load, generation-heavy traffic, strict deadlines, or failure-heavy capacity without material repricing or cross-subsidy.
+
+[1]: https://huggingface.co/zai-org/GLM-5.2-FP8/tree/main "https://huggingface.co/zai-org/GLM-5.2-FP8/tree/main"
+[2]: https://raw.githubusercontent.com/sgl-project/sglang/main/docs_new/src/snippets/configs/zai-org/glm-5.2-benchmarks.jsx "https://raw.githubusercontent.com/sgl-project/sglang/main/docs_new/src/snippets/configs/zai-org/glm-5.2-benchmarks.jsx"
+[3]: https://docs.z.ai/guides/overview/pricing "https://docs.z.ai/guides/overview/pricing"
+[4]: https://docs.gpustack.ai/latest/performance-lab/glm-5.2/h200/ "https://docs.gpustack.ai/latest/performance-lab/glm-5.2/h200/"
+[5]: https://huggingface.co/zai-org/GLM-5.2-FP8/raw/main/config.json "https://huggingface.co/zai-org/GLM-5.2-FP8/raw/main/config.json"
+[6]: https://huggingface.co/zai-org/GLM-5.2-FP8 "https://huggingface.co/zai-org/GLM-5.2-FP8"
+[7]: https://docs.nvidia.com/dynamo/recipes/glm-5-2 "GLM-5.2 | NVIDIA Dynamo Documentation"
+[8]: https://docs.nvidia.com/nim/large-language-models/1.15.0/supported-models.html "https://docs.nvidia.com/nim/large-language-models/1.15.0/supported-models.html"
+[9]: https://recipes.vllm.ai/zai-org/GLM-5.2 "https://recipes.vllm.ai/zai-org/GLM-5.2"
+[10]: https://www.coreweave.com/pricing "https://www.coreweave.com/pricing"
+[11]: https://raw.githubusercontent.com/sgl-project/sglang/main/docs_new/src/snippets/configs/zai-org/glm-5.2.jsx "https://raw.githubusercontent.com/sgl-project/sglang/main/docs_new/src/snippets/configs/zai-org/glm-5.2.jsx"
+[12]: https://github.com/sgl-project/sglang-jax/issues/1427 "https://github.com/sgl-project/sglang-jax/issues/1427"
+[13]: https://github.com/sgl-project/sglang/releases "https://github.com/sgl-project/sglang/releases"
