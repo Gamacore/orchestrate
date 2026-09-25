@@ -56,10 +56,10 @@ describe('security copy', () => {
 describe('marketing navigation', () => {
 	test('only exposes destinations with real informational content', () => {
 		expect(marketingNav).toEqual([
-			{ label: 'Use cases', href: '#use-cases' },
+			{ label: 'Product', href: '#use-cases' },
 			{ label: 'Pricing', href: '#pricing' },
 			{ label: 'Docs', href: '/docs' },
-			{ label: 'Blog', href: '/blog' }
+			{ label: 'Demo', href: 'https://dashboard.arcten.com/demo' }
 		]);
 	});
 

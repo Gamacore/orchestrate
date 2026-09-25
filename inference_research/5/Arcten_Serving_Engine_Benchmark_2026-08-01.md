@@ -17,34 +17,34 @@
 
 ### Decision table
 
-| Decision | Recommendation | Confidence | Promotion gate |
-|---|---|---:|---|
-| GLM default engine | SGLang 0.5.16 | Medium | Beats or ties vLLM on deadline goodput and full COGS; native 1M passes |
-| GLM fallback | vLLM 0.26.0 | Medium-high | Correctness, 1M context, failure recovery, and no material p99 regression |
-| GLM TensorRT-LLM | Qualification only | High | Exact snapshot + BF16 KV + native 1M + stable OpenAI streaming |
-| GLM LMDeploy | Qualification only | High | Same as above; no conversion or context reduction |
-| One-GPU control | Qwen3-32B-FP8 on one H100 80GB | High | Exact artifact hashes and native 32K pass |
-| Fourth engine | LMDeploy 0.15.0 | Medium | Exact blocked-FP8 and BF16-KV smoke; otherwise record unsupported |
-| Initial product lanes | Now isolated; Priority/Standard experimental | Medium | p99 deadline goodput and measured COGS |
-| Flex target | No commitment | High | Measured output TPS exceeds margin gate under observed utilization/failures |
+| Decision              | Recommendation                               |  Confidence | Promotion gate                                                              |
+| --------------------- | -------------------------------------------- | ----------: | --------------------------------------------------------------------------- |
+| GLM default engine    | SGLang 0.5.16                                |      Medium | Beats or ties vLLM on deadline goodput and full COGS; native 1M passes      |
+| GLM fallback          | vLLM 0.26.0                                  | Medium-high | Correctness, 1M context, failure recovery, and no material p99 regression   |
+| GLM TensorRT-LLM      | Qualification only                           |        High | Exact snapshot + BF16 KV + native 1M + stable OpenAI streaming              |
+| GLM LMDeploy          | Qualification only                           |        High | Same as above; no conversion or context reduction                           |
+| One-GPU control       | Qwen3-32B-FP8 on one H100 80GB               |        High | Exact artifact hashes and native 32K pass                                   |
+| Fourth engine         | LMDeploy 0.15.0                              |      Medium | Exact blocked-FP8 and BF16-KV smoke; otherwise record unsupported           |
+| Initial product lanes | Now isolated; Priority/Standard experimental |      Medium | p99 deadline goodput and measured COGS                                      |
+| Flex target           | No commitment                                |        High | Measured output TPS exceeds margin gate under observed utilization/failures |
 
 ## 2. Evidence table
 
 The complete evidence matrix, including all requested fields, is in [`docs/evidence.csv`](docs/evidence.csv). Values not produced by the pinned GPU protocol remain `NOT_MEASURED`.
 
-| Evidence | Quality category | Scope | What the source establishes | What it does **not** establish |
-|---|---|---|---|---|
-| GLM-5.2-FP8 revision `ba978f7`, ~756GB, native 1M context [S1][S2] | Artifact bitwise identity after local hashes | Exact checkpoint/tokenizer/template/config | Model identity, documented context, SGLang/vLLM paths | Runtime fit, throughput, tails, or cross-engine bitwise outputs |
-| Qwen3-32B-FP8 revision `aa55da1`, ~34.3GB, native 32K [S3][S4] | Requested FP8 artifact; FP8 is lossy versus an unquantized parent | Exact one-GPU control | Architecture, precision format, native context | Exact TRT/LMDeploy compatibility or measured one-GPU performance |
-| SGLang 0.5.16 / `fdebc93` [S5] | Mathematically intended equivalent with BF16 KV | Exact models after qualification | Current version; GLM-specific changes; dependency pins; known issue | Whole-system saving; transferable benchmark number |
-| vLLM 0.26.0 / `568afb3` [S7][S8] | Mathematically intended equivalent with BF16 KV | Exact models after qualification | Current version, controls, GLM5.2 work | Rank against SGLang for Arcten’s workload |
-| TensorRT-LLM 1.3.0rc23 / `d41ab33` [S10][S11][S12] | Unknown until exact loader/precision proof | Conditional Qwen; GLM qualification | Generic architecture support and OpenAI server | Exact snapshot support; production stability; performance rank |
-| LMDeploy 0.15.0 / `f4b8140` [S13][S14][S15] | Unknown until exact loader/precision proof | Conditional Qwen; GLM qualification | Family support and serving controls | Exact blocked-FP8/GLM-5.2 configuration support |
-| DSA cache-layer split in SGLang [S5] | No model-quality change when exact architecture is preserved | GLM-5.2, prefill CP, documented configuration | Source reports 0.77→0.20GB/rank at 8,192 tokens and CP=4 | Throughput, full-context memory, tail, or dollar saving |
-| MTP/speculative decoding [S1][S5][S7][S10][S13] | Distribution-preserving only with exact verification/sampling | Decode-heavy, engine/model-specific | Feature availability and scoped component claims | Fixed acceptance, throughput, or COGS benefit |
-| Prefix caching [S6][S8][S10][S13] | Intended equivalent for exact prefix reuse | Repeated prefixes, tenant isolation | Commodity mechanism | Hit rate, memory rent, security, or savings for Arcten traffic |
-| FP8 KV [S6][S8][S14][S15] | **Lossy** | Separate long-context ablation | Capacity option | Equivalence to BF16 KV or acceptable quality |
-| Public GPU prices [S16][S17] | Economic input | B200/H100/H200 sensitivities | Displayed list rates on access date | Availability, contract rate, taxes, retries, or full COGS |
+| Evidence                                                           | Quality category                                                  | Scope                                         | What the source establishes                                         | What it does **not** establish                                   |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| GLM-5.2-FP8 revision `ba978f7`, ~756GB, native 1M context [S1][S2] | Artifact bitwise identity after local hashes                      | Exact checkpoint/tokenizer/template/config    | Model identity, documented context, SGLang/vLLM paths               | Runtime fit, throughput, tails, or cross-engine bitwise outputs  |
+| Qwen3-32B-FP8 revision `aa55da1`, ~34.3GB, native 32K [S3][S4]     | Requested FP8 artifact; FP8 is lossy versus an unquantized parent | Exact one-GPU control                         | Architecture, precision format, native context                      | Exact TRT/LMDeploy compatibility or measured one-GPU performance |
+| SGLang 0.5.16 / `fdebc93` [S5]                                     | Mathematically intended equivalent with BF16 KV                   | Exact models after qualification              | Current version; GLM-specific changes; dependency pins; known issue | Whole-system saving; transferable benchmark number               |
+| vLLM 0.26.0 / `568afb3` [S7][S8]                                   | Mathematically intended equivalent with BF16 KV                   | Exact models after qualification              | Current version, controls, GLM5.2 work                              | Rank against SGLang for Arcten’s workload                        |
+| TensorRT-LLM 1.3.0rc23 / `d41ab33` [S10][S11][S12]                 | Unknown until exact loader/precision proof                        | Conditional Qwen; GLM qualification           | Generic architecture support and OpenAI server                      | Exact snapshot support; production stability; performance rank   |
+| LMDeploy 0.15.0 / `f4b8140` [S13][S14][S15]                        | Unknown until exact loader/precision proof                        | Conditional Qwen; GLM qualification           | Family support and serving controls                                 | Exact blocked-FP8/GLM-5.2 configuration support                  |
+| DSA cache-layer split in SGLang [S5]                               | No model-quality change when exact architecture is preserved      | GLM-5.2, prefill CP, documented configuration | Source reports 0.77→0.20GB/rank at 8,192 tokens and CP=4            | Throughput, full-context memory, tail, or dollar saving          |
+| MTP/speculative decoding [S1][S5][S7][S10][S13]                    | Distribution-preserving only with exact verification/sampling     | Decode-heavy, engine/model-specific           | Feature availability and scoped component claims                    | Fixed acceptance, throughput, or COGS benefit                    |
+| Prefix caching [S6][S8][S10][S13]                                  | Intended equivalent for exact prefix reuse                        | Repeated prefixes, tenant isolation           | Commodity mechanism                                                 | Hit rate, memory rent, security, or savings for Arcten traffic   |
+| FP8 KV [S6][S8][S14][S15]                                          | **Lossy**                                                         | Separate long-context ablation                | Capacity option                                                     | Equivalence to BF16 KV or acceptable quality                     |
+| Public GPU prices [S16][S17]                                       | Economic input                                                    | B200/H100/H200 sensitivities                  | Displayed list rates on access date                                 | Availability, contract rate, taxes, retries, or full COGS        |
 
 ### Quality taxonomy used throughout
 
@@ -57,40 +57,40 @@ The complete evidence matrix, including all requested fields, is in [`docs/evide
 
 ### 3.1 Exact matrix
 
-| Model | Immutable revision | Ranked precision | Context | Primary hardware | Engines admitted initially |
-|---|---|---|---:|---|---|
-| `zai-org/GLM-5.2-FP8` | `ba978f7` | Exact FP8 weights + BF16 KV | 1,048,576 | 8×B200 180GB, TP8 | SGLang, vLLM |
-| Same GLM | Same | Same | Same | 8×H200 141GB, TP8 sensitivity | SGLang, vLLM |
-| `Qwen/Qwen3-32B-FP8` | `aa55da1` | Exact blocked-FP8 weights + BF16 KV | 32,768 | one H100 80GB, TP1 | SGLang, vLLM; TRT/LMDeploy after smoke |
-| Same Qwen | Same | Same | Same | one H200 141GB sensitivity | Same admission rule |
+| Model                 | Immutable revision | Ranked precision                    |   Context | Primary hardware              | Engines admitted initially             |
+| --------------------- | ------------------ | ----------------------------------- | --------: | ----------------------------- | -------------------------------------- |
+| `zai-org/GLM-5.2-FP8` | `ba978f7`          | Exact FP8 weights + BF16 KV         | 1,048,576 | 8×B200 180GB, TP8             | SGLang, vLLM                           |
+| Same GLM              | Same               | Same                                |      Same | 8×H200 141GB, TP8 sensitivity | SGLang, vLLM                           |
+| `Qwen/Qwen3-32B-FP8`  | `aa55da1`          | Exact blocked-FP8 weights + BF16 KV |    32,768 | one H100 80GB, TP1            | SGLang, vLLM; TRT/LMDeploy after smoke |
+| Same Qwen             | Same               | Same                                |      Same | one H200 141GB sensitivity    | Same admission rule                    |
 
 No engine may enter the ranked matrix after converting, requantizing, reshaping into a different checkpoint, changing tokenizer/template, reducing context, or enabling YaRN. A loader may transform layout internally only if the source tensors and runtime math/precision are documented and the resulting configuration passes the exact-output and stochastic gates; any persistent converted artifact is recorded and not called bitwise-identical to the source checkpoint.
 
 ### 3.2 Pinned software
 
-| Layer | Pin |
-|---|---|
-| Host driver | NVIDIA 595.71.05; Fabric Manager 595.71.05 on HGX [S18] |
+| Layer               | Pin                                                                                                         |
+| ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Host driver         | NVIDIA 595.71.05; Fabric Manager 595.71.05 on HGX [S18]                                                     |
 | Reference container | `nvcr.io/nvidia/pytorch:26.07-py3`; Ubuntu 24.04; CUDA 13.3.1; exact OCI digest captured at execution [S19] |
-| SGLang | 0.5.16, commit `fdebc93`; FlashInfer 0.6.14; `sgl-kernel` 0.4.5 [S5] |
-| vLLM | 0.26.0, commit `568afb3` [S7] |
-| TensorRT-LLM | 1.3.0rc23, commit `d41ab33` [S10] |
-| LMDeploy | 0.15.0, commit `f4b8140` [S13] |
+| SGLang              | 0.5.16, commit `fdebc93`; FlashInfer 0.6.14; `sgl-kernel` 0.4.5 [S5]                                        |
+| vLLM                | 0.26.0, commit `568afb3` [S7]                                                                               |
+| TensorRT-LLM        | 1.3.0rc23, commit `d41ab33` [S10]                                                                           |
+| LMDeploy            | 0.15.0, commit `f4b8140` [S13]                                                                              |
 
 Each engine should use its supported image/dependency stack. Forcing every engine into one container is not fair if it creates unsupported combinations. The execution record must include the OCI digest, `pip freeze`, CUDA/NCCL/Triton/FlashInfer/kernel versions, compiled extension hashes, driver, firmware, GPU clocks/power limit, NVLink topology, NUMA, and local checkpoint hashes.
 
 ### 3.3 What was executed here
 
-| Item | Result |
-|---|---|
-| Benchmark client, streaming SSE parser, concurrency/rate scheduler | Executed |
+| Item                                                                   | Result                                                                       |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Benchmark client, streaming SSE parser, concurrency/rate scheduler     | Executed                                                                     |
 | Exact workload specification and deterministic request generation code | Implemented; actual model-tokenizer generation requires the pinned snapshots |
-| Latency/throughput analyzer and bootstrap-ready result schema | Executed against deterministic mock endpoint |
-| Artifact hash and output-comparison tooling | Executed; self-comparison passed |
-| Full COGS calculator and pricing sensitivity | Executed; CSV outputs generated |
-| Unit tests | Passed |
-| Deterministic mock run | 24/24 requests completed; self-comparison passed |
-| SGLang/vLLM/TRT-LLM/LMDeploy GPU runs | **Not executed: no NVIDIA GPU in runtime** |
+| Latency/throughput analyzer and bootstrap-ready result schema          | Executed against deterministic mock endpoint                                 |
+| Artifact hash and output-comparison tooling                            | Executed; self-comparison passed                                             |
+| Full COGS calculator and pricing sensitivity                           | Executed; CSV outputs generated                                              |
+| Unit tests                                                             | Passed                                                                       |
+| Deterministic mock run                                                 | 24/24 requests completed; self-comparison passed                             |
+| SGLang/vLLM/TRT-LLM/LMDeploy GPU runs                                  | **Not executed: no NVIDIA GPU in runtime**                                   |
 
 The package therefore contains a **reproducible benchmark**, not fabricated engine results. See `EXECUTION_STATUS.json` and `results/GPU_RESULTS_NOT_EXECUTED.md`.
 
@@ -138,12 +138,12 @@ Start all engines with exact FP8 weights, BF16 KV, native context, no prefix cac
 
 ### 4.1 Source-qualified comparison
 
-| Engine | GLM-5.2 exact status | Qwen3-32B exact status | Strengths to test | Principal risk |
-|---|---|---|---|---|
-| SGLang 0.5.16 | Documented and admitted | Documented and admitted | GLM-specific work, RadixAttention, current kernel work, rich parallel controls | Known nondeterministic graph/DP path; operational complexity |
-| vLLM 0.26.0 | Documented and admitted | Documented and admitted | Broad production surface, observability, cache/parallel/KV controls | Exact GLM rank unknown; compile/backend regressions possible |
-| TensorRT-LLM 1.3.0rc23 | Generic GLM-5 only; qualification | Qwen3 architecture; exact snapshot smoke | NVIDIA-specific kernels, scheduler and metrics | Pre-release, exact loader/precision uncertainty, known issues |
-| LMDeploy 0.15.0 | Family support; qualification | Family support; exact snapshot smoke | PyTorch/TurboMind alternatives, mature API server | Exact blocked-FP8 path unproved; backend/precision ambiguity |
+| Engine                 | GLM-5.2 exact status              | Qwen3-32B exact status                   | Strengths to test                                                              | Principal risk                                                |
+| ---------------------- | --------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| SGLang 0.5.16          | Documented and admitted           | Documented and admitted                  | GLM-specific work, RadixAttention, current kernel work, rich parallel controls | Known nondeterministic graph/DP path; operational complexity  |
+| vLLM 0.26.0            | Documented and admitted           | Documented and admitted                  | Broad production surface, observability, cache/parallel/KV controls            | Exact GLM rank unknown; compile/backend regressions possible  |
+| TensorRT-LLM 1.3.0rc23 | Generic GLM-5 only; qualification | Qwen3 architecture; exact snapshot smoke | NVIDIA-specific kernels, scheduler and metrics                                 | Pre-release, exact loader/precision uncertainty, known issues |
+| LMDeploy 0.15.0        | Family support; qualification     | Family support; exact snapshot smoke     | PyTorch/TurboMind alternatives, mature API server                              | Exact blocked-FP8 path unproved; backend/precision ambiguity  |
 
 No source establishes a stronger universal production engine for both exact checkpoints. KTransformers is author-documented for GLM but changes the hardware/memory hierarchy and belongs in a separate heterogeneous CPU–GPU economics lane. NVIDIA Dynamo is an orchestration/disaggregation layer over engines, not a comparable replacement engine.
 
@@ -262,19 +262,19 @@ Assumptions below: listed 8×B200 rate, 15% aggregate non-GPU placeholder, 70% p
 
 #### Lambda 8×B200, zero gross margin
 
-| Lane | Input tok/s required | Cached-input tok/s required | Output tok/s required |
-|---|---:|---:|---:|
-| Now | 17,446 | 93,938 | 5,551 |
-| Priority | 34,891 | 135,688 | 8,141 |
-| Standard | 48,848 | 203,532 | 9,770 |
-| Flex | 61,060 | 305,298 | 13,569 |
+| Lane     | Input tok/s required | Cached-input tok/s required | Output tok/s required |
+| -------- | -------------------: | --------------------------: | --------------------: |
+| Now      |               17,446 |                      93,938 |                 5,551 |
+| Priority |               34,891 |                     135,688 |                 8,141 |
+| Standard |               48,848 |                     203,532 |                 9,770 |
+| Flex     |               61,060 |                     305,298 |                13,569 |
 
 #### Output rate required at 40% gross margin
 
-| Provider / capacity | Now | Priority | Standard | Flex |
-|---|---:|---:|---:|---:|
-| Lambda 8×B200 on-demand | 9,251 | 13,569 | 16,283 | **22,615** |
-| CoreWeave NA 8×B200 on-demand | 11,893 | 17,443 | 20,931 | **29,071** |
+| Provider / capacity           |    Now | Priority | Standard |       Flex |
+| ----------------------------- | -----: | -------: | -------: | ---------: |
+| Lambda 8×B200 on-demand       |  9,251 |   13,569 |   16,283 | **22,615** |
+| CoreWeave NA 8×B200 on-demand | 11,893 |   17,443 |   20,931 | **29,071** |
 
 The 2.9% payment sensitivity is included in `required_throughput_by_target.csv`; it raises the required rate further. [S16][S17]
 
@@ -283,12 +283,12 @@ The 2.9% payment sensitivity is included in `required_throughput_by_target.csv`;
 The following table is an **explicit unmeasured sensitivity**, using reference saturated rates of 200k uncached input tok/s, 1M cached-input tok/s, and 20k output tok/s. It shows why utilization and failure reserve dominate. It is not a performance estimate for GLM-5.2.
 
 | Lambda 8×B200 state | Productive utilization | Input $/M | Cached $/M | Output $/M |
-|---|---:|---:|---:|---:|
-| Low load | 20% | 0.427 | 0.085 | 4.274 |
-| Burst recovery | 40% | 0.223 | 0.045 | 2.230 |
-| Sustained | 70% | 0.124 | 0.025 | 1.242 |
-| High sustained | 85% | 0.103 | 0.021 | 1.032 |
-| Failure degraded | 50% | 0.201 | 0.040 | 2.007 |
+| ------------------- | ---------------------: | --------: | ---------: | ---------: |
+| Low load            |                    20% |     0.427 |      0.085 |      4.274 |
+| Burst recovery      |                    40% |     0.223 |      0.045 |      2.230 |
+| Sustained           |                    70% |     0.124 |      0.025 |      1.242 |
+| High sustained      |                    85% |     0.103 |      0.021 |      1.032 |
+| Failure degraded    |                    50% |     0.201 |      0.040 |      2.007 |
 
 At these reference rates, the same engine appears profitable or unprofitable solely because productive utilization and reserve change. This is why “batching saves X%” and “spot saves Y%” are invalid fixed claims.
 

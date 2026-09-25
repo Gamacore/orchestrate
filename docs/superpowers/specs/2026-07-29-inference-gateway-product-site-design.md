@@ -163,11 +163,11 @@ External provider routes use customer-owned API keys in the initial product. The
 provider relationship and is billed directly by that provider. Arcten can separately bill for
 Gateway usage and Arcten-hosted inference.
 
-| Request type | Initial execution route | Billing relationship |
-| --- | --- | --- |
-| Proprietary model | Customer-authorized provider account | Provider bills customer |
-| Open model, immediate | Arcten or customer-authorized provider | Selected route bills customer |
-| Open model, delayed | Arcten completion-window route when supported | Arcten bills customer |
+| Request type          | Initial execution route                       | Billing relationship          |
+| --------------------- | --------------------------------------------- | ----------------------------- |
+| Proprietary model     | Customer-authorized provider account          | Provider bills customer       |
+| Open model, immediate | Arcten or customer-authorized provider        | Selected route bills customer |
+| Open model, delayed   | Arcten completion-window route when supported | Arcten bills customer         |
 
 The first policy surface supports:
 
@@ -212,15 +212,15 @@ preferred fallback: Customer preferred provider
 The dollar values below are fixture data for explaining routing controls. They are not production
 pricing and must be labeled `Illustrative request estimate`.
 
-| Candidate | Model | Route label | Timing | Illustrative cost | Normal or fallback |
-| --- | --- | --- | --- | ---: | --- |
-| customer-exact-now | GLM-5.2 FP8 | Customer provider | Immediate | $0.046 | Normal |
-| arcten-exact-deadline | GLM-5.2 FP8 | Arcten Inference preview | Within 300s | $0.028 | Normal |
-| arcten-exact-flex | GLM-5.2 FP8 | Arcten Inference preview | Best effort | $0.018 | Normal |
-| customer-alt-now | DeepSeek V4 | Customer provider | Immediate | $0.032 | Normal |
-| arcten-alt-deadline | DeepSeek V4 | Arcten Inference preview | Within 300s | $0.020 | Normal |
-| arcten-alt-flex | DeepSeek V4 | Arcten Inference preview | Best effort | $0.014 | Normal |
-| preferred-exact-now | GLM-5.2 FP8 | Customer preferred provider | Immediate | $0.024 | Fallback only |
+| Candidate             | Model       | Route label                 | Timing      | Illustrative cost | Normal or fallback |
+| --------------------- | ----------- | --------------------------- | ----------- | ----------------: | ------------------ |
+| customer-exact-now    | GLM-5.2 FP8 | Customer provider           | Immediate   |            $0.046 | Normal             |
+| arcten-exact-deadline | GLM-5.2 FP8 | Arcten Inference preview    | Within 300s |            $0.028 | Normal             |
+| arcten-exact-flex     | GLM-5.2 FP8 | Arcten Inference preview    | Best effort |            $0.018 | Normal             |
+| customer-alt-now      | DeepSeek V4 | Customer provider           | Immediate   |            $0.032 | Normal             |
+| arcten-alt-deadline   | DeepSeek V4 | Arcten Inference preview    | Within 300s |            $0.020 | Normal             |
+| arcten-alt-flex       | DeepSeek V4 | Arcten Inference preview    | Best effort |            $0.014 | Normal             |
+| preferred-exact-now   | GLM-5.2 FP8 | Customer preferred provider | Immediate   |            $0.024 | Fallback only      |
 
 Derive the example receipt with these rules, in order:
 
@@ -537,11 +537,11 @@ platform structure remains visible on every route:
    Links: `Preview pricing` to `/inference#pricing`; `How windows work` to
    `/inference#use-cases`.
 2. `Gateway`: `Preview model, timing, budget, and fallback controls across Arcten and your provider
-   accounts.` Links: `Explore Gateway` to `/gateway`; `Preview Gateway docs` to `/docs/gateway`.
+accounts.` Links: `Explore Gateway` to `/gateway`; `Preview Gateway docs` to `/docs/gateway`.
 3. `Build with Arcten`: `Review the proposed request shapes, service behavior, and early-access
-   constraints.` Links: `Read the docs` to `/docs`; `Request early access` to `/#access`.
+constraints.` Links: `Read the docs` to `/docs`; `Request early access` to `/#access`.
 4. `Why Arcten`: `Learn why Arcten is starting with inference optimization and where it intends to
-   go.` Links: `Our company` to `/company`; `Read the blog` to `/blog`.
+go.` Links: `Our company` to `/company`; `Read the blog` to `/blog`.
 
 In the footer utility row, point `Pricing` and `Service tiers` to the corresponding fragments on
 `/inference`. Add direct `Inference` and `Gateway` links without removing the verified social,
@@ -702,30 +702,30 @@ Label it `Proposed API` and do not publish a production base URL or API key flow
 
 ```json
 {
-  "model": "zai-org/GLM-5.2-FP8",
-  "stream": false,
-  "max_completion_tokens": 4096,
-  "messages": [
-    {
-      "role": "user",
-      "content": "Run the evaluation suite."
-    }
-  ],
-  "routing": {
-    "model_policy": "exact",
-    "allowed_models": [],
-    "completion": {
-      "mode": "deadline",
-      "deadline_seconds": 300
-    },
-    "cost": {
-      "mode": "lowest_cost"
-    },
-    "fallback": {
-      "mode": "reject",
-      "preferred_provider": null
-    }
-  }
+	"model": "zai-org/GLM-5.2-FP8",
+	"stream": false,
+	"max_completion_tokens": 4096,
+	"messages": [
+		{
+			"role": "user",
+			"content": "Run the evaluation suite."
+		}
+	],
+	"routing": {
+		"model_policy": "exact",
+		"allowed_models": [],
+		"completion": {
+			"mode": "deadline",
+			"deadline_seconds": 300
+		},
+		"cost": {
+			"mode": "lowest_cost"
+		},
+		"fallback": {
+			"mode": "reject",
+			"preferred_provider": null
+		}
+	}
 }
 ```
 
@@ -766,12 +766,12 @@ x-arcten-model-changed
 
 ```json
 {
-  "id": "deferred_example",
-  "object": "arcten.deferred_chat_completion",
-  "status": "queued",
-  "route_id": "route_example",
-  "response_url": "/v1/responses/deferred_example",
-  "route_url": "/v1/routes/route_example"
+	"id": "deferred_example",
+	"object": "arcten.deferred_chat_completion",
+	"status": "queued",
+	"route_id": "route_example",
+	"response_url": "/v1/responses/deferred_example",
+	"route_url": "/v1/routes/route_example"
 }
 ```
 
@@ -781,14 +781,14 @@ x-arcten-model-changed
 
 ```json
 {
-  "id": "deferred_example",
-  "object": "arcten.deferred_chat_completion",
-  "status": "failed",
-  "route_id": "route_example",
-  "error": {
-    "code": "upstream_failed",
-    "message": "The selected route did not complete."
-  }
+	"id": "deferred_example",
+	"object": "arcten.deferred_chat_completion",
+	"status": "failed",
+	"route_id": "route_example",
+	"error": {
+		"code": "upstream_failed",
+		"message": "The selected route did not complete."
+	}
 }
 ```
 
@@ -802,26 +802,26 @@ final response headers. Document this queued receipt example:
 
 ```json
 {
-  "route_id": "route_example",
-  "status": "queued",
-  "requested_model": "zai-org/GLM-5.2-FP8",
-  "selected_model": "zai-org/GLM-5.2-FP8",
-  "selected_provider": "arcten_inference_preview",
-  "model_changed": false,
-  "completion": {
-    "mode": "deadline",
-    "deadline_seconds": 300
-  },
-  "estimated_cost_usd": 0.028,
-  "actual_cost_usd": null,
-  "latency_ms": null,
-  "token_usage": {
-    "input_tokens": null,
-    "output_tokens": null,
-    "total_tokens": null
-  },
-  "error": null,
-  "reason": "Lowest illustrative exact-model route within the completion target."
+	"route_id": "route_example",
+	"status": "queued",
+	"requested_model": "zai-org/GLM-5.2-FP8",
+	"selected_model": "zai-org/GLM-5.2-FP8",
+	"selected_provider": "arcten_inference_preview",
+	"model_changed": false,
+	"completion": {
+		"mode": "deadline",
+		"deadline_seconds": 300
+	},
+	"estimated_cost_usd": 0.028,
+	"actual_cost_usd": null,
+	"latency_ms": null,
+	"token_usage": {
+		"input_tokens": null,
+		"output_tokens": null,
+		"total_tokens": null
+	},
+	"error": null,
+	"reason": "Lowest illustrative exact-model route within the completion target."
 }
 ```
 
@@ -830,16 +830,16 @@ completed-state excerpt for the same receipt:
 
 ```json
 {
-  "route_id": "route_example",
-  "status": "completed",
-  "actual_cost_usd": 0.027,
-  "latency_ms": 118300,
-  "token_usage": {
-    "input_tokens": 2400,
-    "output_tokens": 680,
-    "total_tokens": 3080
-  },
-  "error": null
+	"route_id": "route_example",
+	"status": "completed",
+	"actual_cost_usd": 0.027,
+	"latency_ms": 118300,
+	"token_usage": {
+		"input_tokens": 2400,
+		"output_tokens": 680,
+		"total_tokens": 3080
+	},
+	"error": null
 }
 ```
 
@@ -860,35 +860,35 @@ For a request with no permitted route, document this proposed `409` shape:
 
 ```json
 {
-  "error": {
-    "code": "routing_constraints_unsatisfied",
-    "message": "No permitted route satisfies the selected model, timing, and cost constraints."
-  },
-  "route_receipt": {
-    "route_id": "route_example_rejected",
-    "status": "rejected",
-    "requested_model": "zai-org/GLM-5.2-FP8",
-    "selected_model": null,
-    "selected_provider": null,
-    "model_changed": false,
-    "completion": {
-      "mode": "now",
-      "deadline_seconds": null
-    },
-    "estimated_cost_usd": null,
-    "actual_cost_usd": null,
-    "latency_ms": null,
-    "token_usage": {
-      "input_tokens": null,
-      "output_tokens": null,
-      "total_tokens": null
-    },
-    "error": {
-      "code": "routing_constraints_unsatisfied",
-      "message": "No permitted route satisfies the selected model, timing, and cost constraints."
-    },
-    "reason": "No exact-model immediate route fits the illustrative price cap."
-  }
+	"error": {
+		"code": "routing_constraints_unsatisfied",
+		"message": "No permitted route satisfies the selected model, timing, and cost constraints."
+	},
+	"route_receipt": {
+		"route_id": "route_example_rejected",
+		"status": "rejected",
+		"requested_model": "zai-org/GLM-5.2-FP8",
+		"selected_model": null,
+		"selected_provider": null,
+		"model_changed": false,
+		"completion": {
+			"mode": "now",
+			"deadline_seconds": null
+		},
+		"estimated_cost_usd": null,
+		"actual_cost_usd": null,
+		"latency_ms": null,
+		"token_usage": {
+			"input_tokens": null,
+			"output_tokens": null,
+			"total_tokens": null
+		},
+		"error": {
+			"code": "routing_constraints_unsatisfied",
+			"message": "No permitted route satisfies the selected model, timing, and cost constraints."
+		},
+		"reason": "No exact-model immediate route fits the illustrative price cap."
+	}
 }
 ```
 
@@ -1111,14 +1111,14 @@ infrastructure, or pricing logic.
 
 Add route-specific metadata:
 
-| Route | Title | Description |
-| --- | --- | --- |
-| `/` | `Arcten - Inference optimization for AI workloads` | `Explore completion-window open-model inference and customer-controlled routing across AI providers.` |
-| `/inference` | `Arcten Inference - Completion-window open-model execution` | `Preview supported open models with immediate and lower-priced completion-window options.` |
-| `/gateway` | `Arcten Gateway - Routing and spend controls` | `Preview model, timing, budget, and fallback controls across Arcten and customer-owned provider accounts.` |
-| `/docs` | `Arcten Docs` | `Preview Arcten Inference and Gateway concepts, pricing, policies, and request shapes.` |
-| `/docs/inference` | `Arcten Inference Docs` | `Preview open-model inference, completion windows, pricing, and request formats.` |
-| `/docs/gateway` | `Arcten Gateway Docs` | `Preview BYOK provider routing, policy controls, route receipts, and the proposed Gateway API.` |
+| Route             | Title                                                       | Description                                                                                                |
+| ----------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `/`               | `Arcten - Inference optimization for AI workloads`          | `Explore completion-window open-model inference and customer-controlled routing across AI providers.`      |
+| `/inference`      | `Arcten Inference - Completion-window open-model execution` | `Preview supported open models with immediate and lower-priced completion-window options.`                 |
+| `/gateway`        | `Arcten Gateway - Routing and spend controls`               | `Preview model, timing, budget, and fallback controls across Arcten and customer-owned provider accounts.` |
+| `/docs`           | `Arcten Docs`                                               | `Preview Arcten Inference and Gateway concepts, pricing, policies, and request shapes.`                    |
+| `/docs/inference` | `Arcten Inference Docs`                                     | `Preview open-model inference, completion windows, pricing, and request formats.`                          |
+| `/docs/gateway`   | `Arcten Gateway Docs`                                       | `Preview BYOK provider routing, policy controls, route receipts, and the proposed Gateway API.`            |
 
 Use each route's title and description for its Open Graph and Twitter summary metadata. Keep
 canonical and social URLs base-path aware. Use the existing Arcten social image when available; do

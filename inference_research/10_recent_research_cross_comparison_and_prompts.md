@@ -38,12 +38,12 @@ The best defensible target is **2-5x lower cost per accepted task on selected wo
 
 Sail currently lists GLM-5.2 FP8 at the following prices per million tokens:
 
-| Window | Input | Cached input | Output |
-| --- | ---: | ---: | ---: |
-| ASAP | $1.00 | $0.20 | $3.50 |
-| Priority | $0.70 | $0.18 | $3.00 |
-| Standard | $0.50 | $0.12 | $2.50 |
-| Flex | $0.40 | $0.08 | $1.80 |
+| Window   | Input | Cached input | Output |
+| -------- | ----: | -----------: | -----: |
+| ASAP     | $1.00 |        $0.20 |  $3.50 |
+| Priority | $0.70 |        $0.18 |  $3.00 |
+| Standard | $0.50 |        $0.12 |  $2.50 |
+| Flex     | $0.40 |        $0.08 |  $1.80 |
 
 Sail describes the windows as immediate, about one minute, about five minutes, and best effort. It publicly attributes efficiency to CUDA work, inference-engine changes, provider distribution, spot capacity, and reliable failover. These are public claims, not proof of its private cost structure.
 
@@ -55,12 +55,12 @@ Sources:
 
 For an illustrative 8 input : 1 output token mix, the uncached blended Sail rates are:
 
-| Window | Blended price / 1M total tokens |
-| --- | ---: |
-| ASAP | $1.278 |
-| Priority | $0.956 |
-| Standard | $0.722 |
-| Flex | $0.556 |
+| Window   | Blended price / 1M total tokens |
+| -------- | ------------------------------: |
+| ASAP     |                          $1.278 |
+| Priority |                          $0.956 |
+| Standard |                          $0.722 |
+| Flex     |                          $0.556 |
 
 This blend is only a comparison anchor. A real cost model must separate prefill, cache-hit prefill, and decode.
 
@@ -76,12 +76,12 @@ Sources:
 SGLang reports the following 8K-input/1K-output FP8 throughput on B200. The metric is total input-plus-output tokens per second per GPU:
 
 | Max concurrency | Total tok/s/GPU | Raw COGS at $2.14/B200-GPU-hour |
-| ---: | ---: | ---: |
-| 1 | 288 | $2.06/M total tokens |
-| 16 | 1,476 | $0.403/M |
-| 64 | 3,078 | $0.193/M |
-| 256 | 5,022 | $0.118/M |
-| 1,024 | 4,059 | $0.146/M |
+| --------------: | --------------: | ------------------------------: |
+|               1 |             288 |            $2.06/M total tokens |
+|              16 |           1,476 |                        $0.403/M |
+|              64 |           3,078 |                        $0.193/M |
+|             256 |           5,022 |                        $0.118/M |
+|           1,024 |           4,059 |                        $0.146/M |
 
 Formula: `GPU hourly rate * 1,000,000 / (tok/s/GPU * 3,600)`.
 
@@ -107,34 +107,34 @@ Use these labels consistently:
 
 Headline numbers are the authors' reported maxima. They are not additive.
 
-| Technique | Headline | What creates the gain | Sparse c1 benefit? | Label | GLM-5.2 assessment |
-| --- | ---: | --- | --- | --- | --- |
-| SGLang B200 concurrency | 5.1x c1 -> c16 raw COGS | Weight/KV traffic and launch overhead amortization | No, unless one customer fans out | E | Proven baseline shape, but MTP acceptance was simulated |
-| GB300 FP8 | 1.35-1.61x tok/s/GPU vs B200 across c1-c256 | More capacity per GPU and only four GPUs for the model | Yes if rental/GPU is below the throughput ratio | E | Official GLM benchmark; obtain real rental quotes |
-| GLM NVFP4 on B200 | 1.06-1.83x vs FP8 depending on concurrency | Lower precision and memory traffic | Yes, strongest at c1 | SKU | Separate product; broad quality validation required |
-| ECF8 | 9.8-14.8% LLM weight reduction; up to 150% throughput | Lossless exponent compression plus larger feasible batch | Potentially, mainly by changing hardware fit | E claimed | 14.8% applied to 756 GB is about 644 GB, still above 8x80 GB before runtime/KV headroom; paper has hardware-table inconsistencies |
-| Shannon-bound ANS compression | about 1.4x FP8 footprint; up to 1.6x throughput | Tile-level entropy coding fused with GEMM | Potentially high if it enables H100 fit | E weights; outputs to verify | Highest-upside exact R&D lead; tested E5M2, not GLM block-E4M3 |
-| ZipServ | up to 30% size; 1.22x average E2E | Fixed-length lossless encoding and fused decompression GEMM | Modest | E weights; outputs to verify | Tested BF16, not native FP8; useful design reference |
-| LMCache | up to 15x throughput | Reuse/offload KV state across requests and engines | Only with repeated prefixes or resumed state | E | Strong for agents, evals, and fanout; no benefit for unique output decode |
-| CoDec | 1.9x attention; 3.8x TPOT vs vLLM | Reads shared-prefix KV once for multiple decode queries | Yes when one request creates branches | E computation; verify numerics | High-value R&D direction; paper defaults to Qwen3-4B, A100, vLLM 0.6.6, and 120K shared prefixes, not DSA |
-| Hydragen | up to 32x attention | Shared-prefix attention decomposition | Same qualification as CoDec | E computation | Supports the direction, not a GLM COGS estimate |
-| Tutti | 78.3% lower TTFT; 27% lower serving cost | SSD-backed KV cache scheduling | Only for long/reused contexts | E | Useful for cache-rich workloads, not raw decode |
-| INFERCEPT | 1.6-2x throughput | Preserve/swap/recompute KV around tool-call pauses | Yes for long agent sessions | E | Agent-specific and older, but directly relevant to Arcten's workload thesis |
-| PIVOT | up to 4x DSA indexer; 1.6x E2E | Shares a full-prefix DSA scan among nearby/MTP queries | Mainly long context | Q | Directly GLM-adjacent. Candidate pruning can omit the true top-k even though retained candidates are rescored exactly |
-| EcoSpec | up to 1.62x decode | Selects speculative paths that reuse activated MoE experts | Potentially | D | Promising, but not evaluated on GLM-5.2 and overlaps MTP gains |
-| Training-free embedding MTP | 15-19% over prior training-free baseline | Better draft generation without new training | Yes | D | GLM already ships MTP; incremental value likely modest |
-| Moebius | 1.16-1.25x on RL rollouts | Runtime TP/EP switching as concurrency changes | Some | E | Useful for burst-to-tail workloads; tested Qwen3-235B on 8xH200 |
-| ExpertPlex | 1.5x short and 2.5x long vs SGLang colocation on GLM-5.1 | Shares MoE experts across prefill/decode; disaggregates attention; persistent tile scheduler | No practical launch benefit | E | Strongest recent GLM-scale systems result, but uses 16-24 H800 GPUs and sustained load |
-| UltraEP | 1.49x average prefill | Exact per-layer expert rebalancing on rack-scale fabric | No | E | Prefill-only and rack-scale; later-stage fleet work |
-| ASAP MoE prefill | 90% SLO-throughput gain | Async attention/expert execution on a supernode | No | E | Prefill-only and specialized hardware topology |
-| MoEless | 84-95% reported cost reduction | Elastic serverless expert replicas | Claimed, but not proven economically | E routing | Cost is a memory-times-latency proxy on an 8xA6000 testbed; requests are batched in one-second buckets because Megatron lacks continuous batching. Treat as a research lead, not dollar COGS evidence |
-| TokenPilot | 56-87% cost reduction | Context compaction while preserving provider cache continuity | Yes | Q | Valuable gateway feature; uses task scores and commercial token prices, not exact GLM execution |
-| CAPC | 49% mean saving over cache-only; up to 90% vs vanilla | Cache-aware prompt compression | Yes | Q | Very new, single-author result; reproduce before product claims |
-| R2-Router | 4-5x lower cost than routing baselines | Joint model and output-length choice | Yes | Q/SKU | Strong gateway direction; not same-model inference |
-| Robust KV reservation | up to 56% lower cost | Better output-length uncertainty management | No at sparse load | E | Trace-driven simulation against fixed reservation; useful after utilization grows |
-| ShuntServe | about 31% cost-efficiency gain vs on-demand | Heterogeneous AWS spot pools and output-preserving migration | Procurement benefit | E | Tested L4/A10G/L40S on 32B/70B, not an 8-way frontier MoE |
-| Coral | up to 2.79x lower cost | Joint multi-model placement over 20 GPU configurations | No | E or Q depending routing | Needs six models, many GPUs, and demand; future fleet controller, not launch secret |
-| Arrival shaping paper | up to 100x energy/request | Sequential Transformers baseline -> TGI plus regular arrivals | No independent gain | E | The headline is not versus SGLang and should never enter Arcten economics as 100x |
+| Technique                     |                                                 Headline | What creates the gain                                                                        | Sparse c1 benefit?                              | Label                          | GLM-5.2 assessment                                                                                                                                                                                    |
+| ----------------------------- | -------------------------------------------------------: | -------------------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SGLang B200 concurrency       |                                  5.1x c1 -> c16 raw COGS | Weight/KV traffic and launch overhead amortization                                           | No, unless one customer fans out                | E                              | Proven baseline shape, but MTP acceptance was simulated                                                                                                                                               |
+| GB300 FP8                     |              1.35-1.61x tok/s/GPU vs B200 across c1-c256 | More capacity per GPU and only four GPUs for the model                                       | Yes if rental/GPU is below the throughput ratio | E                              | Official GLM benchmark; obtain real rental quotes                                                                                                                                                     |
+| GLM NVFP4 on B200             |               1.06-1.83x vs FP8 depending on concurrency | Lower precision and memory traffic                                                           | Yes, strongest at c1                            | SKU                            | Separate product; broad quality validation required                                                                                                                                                   |
+| ECF8                          |    9.8-14.8% LLM weight reduction; up to 150% throughput | Lossless exponent compression plus larger feasible batch                                     | Potentially, mainly by changing hardware fit    | E claimed                      | 14.8% applied to 756 GB is about 644 GB, still above 8x80 GB before runtime/KV headroom; paper has hardware-table inconsistencies                                                                     |
+| Shannon-bound ANS compression |          about 1.4x FP8 footprint; up to 1.6x throughput | Tile-level entropy coding fused with GEMM                                                    | Potentially high if it enables H100 fit         | E weights; outputs to verify   | Highest-upside exact R&D lead; tested E5M2, not GLM block-E4M3                                                                                                                                        |
+| ZipServ                       |                        up to 30% size; 1.22x average E2E | Fixed-length lossless encoding and fused decompression GEMM                                  | Modest                                          | E weights; outputs to verify   | Tested BF16, not native FP8; useful design reference                                                                                                                                                  |
+| LMCache                       |                                     up to 15x throughput | Reuse/offload KV state across requests and engines                                           | Only with repeated prefixes or resumed state    | E                              | Strong for agents, evals, and fanout; no benefit for unique output decode                                                                                                                             |
+| CoDec                         |                        1.9x attention; 3.8x TPOT vs vLLM | Reads shared-prefix KV once for multiple decode queries                                      | Yes when one request creates branches           | E computation; verify numerics | High-value R&D direction; paper defaults to Qwen3-4B, A100, vLLM 0.6.6, and 120K shared prefixes, not DSA                                                                                             |
+| Hydragen                      |                                      up to 32x attention | Shared-prefix attention decomposition                                                        | Same qualification as CoDec                     | E computation                  | Supports the direction, not a GLM COGS estimate                                                                                                                                                       |
+| Tutti                         |                 78.3% lower TTFT; 27% lower serving cost | SSD-backed KV cache scheduling                                                               | Only for long/reused contexts                   | E                              | Useful for cache-rich workloads, not raw decode                                                                                                                                                       |
+| INFERCEPT                     |                                        1.6-2x throughput | Preserve/swap/recompute KV around tool-call pauses                                           | Yes for long agent sessions                     | E                              | Agent-specific and older, but directly relevant to Arcten's workload thesis                                                                                                                           |
+| PIVOT                         |                           up to 4x DSA indexer; 1.6x E2E | Shares a full-prefix DSA scan among nearby/MTP queries                                       | Mainly long context                             | Q                              | Directly GLM-adjacent. Candidate pruning can omit the true top-k even though retained candidates are rescored exactly                                                                                 |
+| EcoSpec                       |                                       up to 1.62x decode | Selects speculative paths that reuse activated MoE experts                                   | Potentially                                     | D                              | Promising, but not evaluated on GLM-5.2 and overlaps MTP gains                                                                                                                                        |
+| Training-free embedding MTP   |                 15-19% over prior training-free baseline | Better draft generation without new training                                                 | Yes                                             | D                              | GLM already ships MTP; incremental value likely modest                                                                                                                                                |
+| Moebius                       |                                1.16-1.25x on RL rollouts | Runtime TP/EP switching as concurrency changes                                               | Some                                            | E                              | Useful for burst-to-tail workloads; tested Qwen3-235B on 8xH200                                                                                                                                       |
+| ExpertPlex                    | 1.5x short and 2.5x long vs SGLang colocation on GLM-5.1 | Shares MoE experts across prefill/decode; disaggregates attention; persistent tile scheduler | No practical launch benefit                     | E                              | Strongest recent GLM-scale systems result, but uses 16-24 H800 GPUs and sustained load                                                                                                                |
+| UltraEP                       |                                    1.49x average prefill | Exact per-layer expert rebalancing on rack-scale fabric                                      | No                                              | E                              | Prefill-only and rack-scale; later-stage fleet work                                                                                                                                                   |
+| ASAP MoE prefill              |                                  90% SLO-throughput gain | Async attention/expert execution on a supernode                                              | No                                              | E                              | Prefill-only and specialized hardware topology                                                                                                                                                        |
+| MoEless                       |                           84-95% reported cost reduction | Elastic serverless expert replicas                                                           | Claimed, but not proven economically            | E routing                      | Cost is a memory-times-latency proxy on an 8xA6000 testbed; requests are batched in one-second buckets because Megatron lacks continuous batching. Treat as a research lead, not dollar COGS evidence |
+| TokenPilot                    |                                    56-87% cost reduction | Context compaction while preserving provider cache continuity                                | Yes                                             | Q                              | Valuable gateway feature; uses task scores and commercial token prices, not exact GLM execution                                                                                                       |
+| CAPC                          |    49% mean saving over cache-only; up to 90% vs vanilla | Cache-aware prompt compression                                                               | Yes                                             | Q                              | Very new, single-author result; reproduce before product claims                                                                                                                                       |
+| R2-Router                     |                   4-5x lower cost than routing baselines | Joint model and output-length choice                                                         | Yes                                             | Q/SKU                          | Strong gateway direction; not same-model inference                                                                                                                                                    |
+| Robust KV reservation         |                                     up to 56% lower cost | Better output-length uncertainty management                                                  | No at sparse load                               | E                              | Trace-driven simulation against fixed reservation; useful after utilization grows                                                                                                                     |
+| ShuntServe                    |              about 31% cost-efficiency gain vs on-demand | Heterogeneous AWS spot pools and output-preserving migration                                 | Procurement benefit                             | E                              | Tested L4/A10G/L40S on 32B/70B, not an 8-way frontier MoE                                                                                                                                             |
+| Coral                         |                                   up to 2.79x lower cost | Joint multi-model placement over 20 GPU configurations                                       | No                                              | E or Q depending routing       | Needs six models, many GPUs, and demand; future fleet controller, not launch secret                                                                                                                   |
+| Arrival shaping paper         |                                up to 100x energy/request | Sequential Transformers baseline -> TGI plus regular arrivals                                | No independent gain                             | E                              | The headline is not versus SGLang and should never enter Arcten economics as 100x                                                                                                                     |
 
 Primary sources:
 

@@ -1,0 +1,37 @@
+$ vite dev --host "127.0.0.1"
+
+  VITE v8.0.9  ready in 3244 ms
+
+  ➜  Local:   http://127.0.0.1:5173/
+  ➜  press h + enter to show help
+9:44:56 PM [vite] (ssr) page reload .svelte-kit/generated/server/internal.js
+9:44:56 PM [vite] (ssr) page reload .svelte-kit/generated/root.js
+9:44:56 PM [vite] (ssr) page reload .svelte-kit/generated/root.svelte
+12:24:32 AM [vite] (client) hmr update /src/routes/+page.svelte, /src/lib/ui/MarketingHeader.svelte, /src/lib/ui/HeroActions.svelte, /src/lib/ui/TrustStrip.svelte, /src/lib/ui/ContactWaitlist.svelte, /src/app.css
+12:24:32 AM [vite] (ssr) page reload src/lib/content/landing.ts
+12:24:35 AM [vite] (client) hmr update /src/lib/ui/MarketingHeader.svelte, /src/app.css
+12:24:35 AM [vite] (ssr) page reload src/lib/ui/MarketingHeader.svelte
+12:24:39 AM [vite] (client) hmr update /src/routes/+layout.svelte, /src/app.css
+12:24:39 AM [vite] (ssr) page reload src/routes/+layout.svelte
+12:24:42 AM [vite] (client) page reload .svelte-kit/generated/client/nodes/6.js
+12:24:42 AM [vite] (client) page reload .svelte-kit/generated/client/app.js
+12:25:02 AM [vite] (client) hmr update /src/app.css
+12:25:02 AM [vite] (ssr) page reload src/lib/ui/MarketingHeader.svelte
+12:31:13 AM [vite] (client) hmr update /src/app.css
+12:31:13 AM [vite] (ssr) page reload src/routes/demo/+page.svelte
+12:31:13 AM [vite] (client) page reload .svelte-kit/generated/client/nodes/6.js
+12:31:13 AM [vite] (client) page reload .svelte-kit/generated/client/app.js
+12:32:02 AM [vite] (client) page reload .svelte-kit/generated/client/nodes/3.js
+12:32:02 AM [vite] (client) page reload .svelte-kit/generated/client/app.js
+12:32:02 AM [vite] (client) page reload .svelte-kit/generated/client/nodes/6.js
+12:32:03 AM [vite] (client) hmr update /src/app.css
+12:32:03 AM [vite] (ssr) page reload src/routes/demo/+page.svelte
+12:32:03 AM [vite] (client) page reload .svelte-kit/generated/client/app.js
+12:32:25 AM [vite] (client) page reload .svelte-kit/generated/client/app.js
+12:32:27 AM [vite] (client) page reload .svelte-kit/generated/client/app.js
+12:32:29 AM [vite] (client) page reload .svelte-kit/generated/client/app.js
+12:32:30 AM [vite] (client) page reload .svelte-kit/generated/client/app.js
+12:32:37 AM [vite] (client) hmr update /src/app.css
+12:32:37 AM [vite] (ssr) page reload src/routes/demo/+page.svelte
+12:33:02 AM [vite] (client) hmr update /src/lib/ui/MarketingHeader.svelte, /src/app.css
+12:33:02 AM [vite] (ssr) page reload src/lib/ui/MarketingHeader.svelte

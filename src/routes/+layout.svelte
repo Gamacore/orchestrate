@@ -14,6 +14,7 @@
 	const footerWidth = $derived(
 		page.url.pathname.startsWith('/blog/') ? 'calc(720px + 4rem)' : siteConfig.contentWidth
 	);
+	const isDashboard = $derived(page.url.pathname.startsWith('/demo'));
 </script>
 
 <svelte:head>
@@ -54,5 +55,7 @@
 
 <div class="flex min-h-screen flex-col">
 	{@render children()}
-	<SiteFooter width={footerWidth} />
+	{#if !isDashboard}
+		<SiteFooter width={footerWidth} />
+	{/if}
 </div>

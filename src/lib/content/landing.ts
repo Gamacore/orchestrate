@@ -24,10 +24,10 @@ export const securityCopy = {
 } as const;
 
 export const marketingNav = [
-	{ label: 'Use cases', href: '#use-cases' },
+	{ label: 'Product', href: '#use-cases' },
 	{ label: 'Pricing', href: '#pricing' },
 	{ label: 'Docs', href: '/docs' },
-	{ label: 'Blog', href: '/blog' }
+	{ label: 'Demo', href: 'https://dashboard.arcten.com/demo' }
 ] as const;
 
 export const heroActions = [

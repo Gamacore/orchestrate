@@ -1,70 +1,70 @@
 {
-  "as_of": "2026-08-01",
-  "overall_status": "protocol_and_harness_complete_gpu_measurements_not_executed",
-  "execution_environment": {
-    "nvidia_gpu_available": false,
-    "reason": "The provided execution runtime exposed no NVIDIA GPU.",
-    "implication": "No serving-engine throughput, latency, GPU-memory, utilization, power, or failure-recovery values are reported as measured."
-  },
-  "completed": [
-    "current official source and support-matrix qualification",
-    "immutable model, engine, hardware, driver, container, and pricing manifests",
-    "exact-model benchmark protocol and workload definitions",
-    "OpenAI-compatible streaming benchmark client",
-    "latency and throughput analysis tooling",
-    "artifact hashing and paired-output comparison tooling",
-    "failure-injection scripts",
-    "complete COGS formulas and reproducible pricing sensitivities",
-    "unit tests",
-    "deterministic mock-server validation"
-  ],
-  "not_executed": [
-    "SGLang GPU benchmark",
-    "vLLM GPU benchmark",
-    "TensorRT-LLM GPU qualification or benchmark",
-    "LMDeploy GPU qualification or benchmark",
-    "native 1048576-token GLM context run",
-    "native 32768-token Qwen context run on H100/H200",
-    "GPU fault-injection and recovery measurements",
-    "invoice-grounded production COGS measurement"
-  ],
-  "measurement_status": {
-    "throughput": "NOT_MEASURED",
-    "ttft": "NOT_MEASURED",
-    "tpot_itl": "NOT_MEASURED",
-    "end_to_end_latency": "NOT_MEASURED",
-    "tail_latency": "NOT_MEASURED",
-    "gpu_memory": "NOT_MEASURED",
-    "gpu_utilization": "NOT_MEASURED",
-    "power": "NOT_MEASURED",
-    "failure_recovery": "NOT_MEASURED",
-    "pricing_gates": "SOURCE_BACKED_FORMULA",
-    "mock_harness_validation": "MEASURED_NON_GPU"
-  },
-  "provisional_recommendation": {
-    "glm_default_candidate": "SGLang 0.5.16",
-    "glm_required_challenger_and_fallback": "vLLM 0.26.0",
-    "glm_tensorrt_llm": "qualification_only",
-    "glm_lmdeploy": "qualification_only",
-    "one_gpu_control": "Qwen/Qwen3-32B-FP8@aa55da1 on one H100 80GB",
-    "baseline_precision": "exact requested FP8 checkpoint weights with BF16 KV cache",
-    "product_policy": "isolate Now; treat Priority and Standard as experiments; make no Flex commitment"
-  },
-  "artifacts": {
-    "report": "REPORT.md",
-    "evidence": "docs/evidence.csv",
-    "sources": "docs/SOURCES.md",
-    "protocol": "manifests/protocol.yaml",
-    "cost_outputs": "results/source_backed/",
-    "mock_outputs": "results/mock_validation/"
-  },
-  "validation": {
-    "python_compileall": "PASS",
-    "yaml_json_csv_schema_checks": "PASS",
-    "shell_syntax_checks": "PASS",
-    "unit_tests": "10 passed",
-    "deterministic_mock_requests": "24/24 passed",
-    "artifact_source_id_integrity": "PASS",
-    "cost_gate_regression_checks": "PASS"
-  }
+	"as_of": "2026-08-01",
+	"overall_status": "protocol_and_harness_complete_gpu_measurements_not_executed",
+	"execution_environment": {
+		"nvidia_gpu_available": false,
+		"reason": "The provided execution runtime exposed no NVIDIA GPU.",
+		"implication": "No serving-engine throughput, latency, GPU-memory, utilization, power, or failure-recovery values are reported as measured."
+	},
+	"completed": [
+		"current official source and support-matrix qualification",
+		"immutable model, engine, hardware, driver, container, and pricing manifests",
+		"exact-model benchmark protocol and workload definitions",
+		"OpenAI-compatible streaming benchmark client",
+		"latency and throughput analysis tooling",
+		"artifact hashing and paired-output comparison tooling",
+		"failure-injection scripts",
+		"complete COGS formulas and reproducible pricing sensitivities",
+		"unit tests",
+		"deterministic mock-server validation"
+	],
+	"not_executed": [
+		"SGLang GPU benchmark",
+		"vLLM GPU benchmark",
+		"TensorRT-LLM GPU qualification or benchmark",
+		"LMDeploy GPU qualification or benchmark",
+		"native 1048576-token GLM context run",
+		"native 32768-token Qwen context run on H100/H200",
+		"GPU fault-injection and recovery measurements",
+		"invoice-grounded production COGS measurement"
+	],
+	"measurement_status": {
+		"throughput": "NOT_MEASURED",
+		"ttft": "NOT_MEASURED",
+		"tpot_itl": "NOT_MEASURED",
+		"end_to_end_latency": "NOT_MEASURED",
+		"tail_latency": "NOT_MEASURED",
+		"gpu_memory": "NOT_MEASURED",
+		"gpu_utilization": "NOT_MEASURED",
+		"power": "NOT_MEASURED",
+		"failure_recovery": "NOT_MEASURED",
+		"pricing_gates": "SOURCE_BACKED_FORMULA",
+		"mock_harness_validation": "MEASURED_NON_GPU"
+	},
+	"provisional_recommendation": {
+		"glm_default_candidate": "SGLang 0.5.16",
+		"glm_required_challenger_and_fallback": "vLLM 0.26.0",
+		"glm_tensorrt_llm": "qualification_only",
+		"glm_lmdeploy": "qualification_only",
+		"one_gpu_control": "Qwen/Qwen3-32B-FP8@aa55da1 on one H100 80GB",
+		"baseline_precision": "exact requested FP8 checkpoint weights with BF16 KV cache",
+		"product_policy": "isolate Now; treat Priority and Standard as experiments; make no Flex commitment"
+	},
+	"artifacts": {
+		"report": "REPORT.md",
+		"evidence": "docs/evidence.csv",
+		"sources": "docs/SOURCES.md",
+		"protocol": "manifests/protocol.yaml",
+		"cost_outputs": "results/source_backed/",
+		"mock_outputs": "results/mock_validation/"
+	},
+	"validation": {
+		"python_compileall": "PASS",
+		"yaml_json_csv_schema_checks": "PASS",
+		"shell_syntax_checks": "PASS",
+		"unit_tests": "10 passed",
+		"deterministic_mock_requests": "24/24 passed",
+		"artifact_source_id_integrity": "PASS",
+		"cost_gate_regression_checks": "PASS"
+	}
 }

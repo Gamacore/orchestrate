@@ -124,7 +124,10 @@ describe('site-wide footer content', () => {
 			kind: 'route'
 		});
 
-		const copy = footerPaths.map((path) => path.description).join(' ').toLowerCase();
+		const copy = footerPaths
+			.map((path) => path.description)
+			.join(' ')
+			.toLowerCase();
 		expect(copy).toContain('planned for early access');
 		expect(copy).toContain('planned openai-compatible');
 		expect(copy).not.toContain('integrate arcten');
@@ -187,8 +190,7 @@ Export:
 export const homepageMission = {
 	eyebrow: 'Our mission',
 	heading: 'More intelligence per dollar. More people able to build.',
-	body:
-		'As AI systems become more capable, the ability to build with them should become more widely available rather than increasingly limited by cost. Arcten is building lower-cost open-model inference so teams can make more attempts, run longer workloads, serve more people, and pursue ideas that would otherwise be too expensive.',
+	body: 'As AI systems become more capable, the ability to build with them should become more widely available rather than increasingly limited by cost. Arcten is building lower-cost open-model inference so teams can make more attempts, run longer workloads, serve more people, and pursue ideas that would otherwise be too expensive.',
 	linkLabel: 'Read our mission',
 	href: '/company'
 } as const;
@@ -203,23 +205,19 @@ export const companyCopy = {
 	sections: [
 		{
 			heading: 'Cost shapes what gets built',
-			body:
-				'Every inference bill places a limit on what a product can attempt. Lower costs mean more experiments, longer-running agents, deeper research, and useful intelligence delivered to more people. They also make room for ideas that would never be economical under traditional inference pricing.'
+			body: 'Every inference bill places a limit on what a product can attempt. Lower costs mean more experiments, longer-running agents, deeper research, and useful intelligence delivered to more people. They also make room for ideas that would never be economical under traditional inference pricing.'
 		},
 		{
 			heading: 'Open models keep progress open',
-			body:
-				'Open models can give developers more freedom to inspect, adapt, and deploy advanced intelligence when their licenses permit. But open weights are not enough if using them at meaningful scale remains prohibitively expensive. Arcten is building the infrastructure needed to make leading open models practical for more builders.'
+			body: 'Open models can give developers more freedom to inspect, adapt, and deploy advanced intelligence when their licenses permit. But open weights are not enough if using them at meaningful scale remains prohibitively expensive. Arcten is building the infrastructure needed to make leading open models practical for more builders.'
 		},
 		{
 			heading: 'Inference is where we start',
-			body:
-				'Arcten is starting with completion-window inference. A request that needs a fast response can choose Now, while flexible workloads can give the system more time to use available capacity efficiently. The intended product keeps the selected model stable while giving builders control over the speed-versus-cost tradeoff.'
+			body: 'Arcten is starting with completion-window inference. A request that needs a fast response can choose Now, while flexible workloads can give the system more time to use available capacity efficiently. The intended product keeps the selected model stable while giving builders control over the speed-versus-cost tradeoff.'
 		},
 		{
 			heading: 'Toward abundant intelligence',
-			body:
-				'As AI systems become more general and useful, access to them should expand alongside their capabilities. We want a future where intelligence is a widely available input to human ambition: helping researchers explore further, small teams build more ambitious products, and individuals turn more of their ideas into reality. Lowering the cost of inference is our first step toward that future.'
+			body: 'As AI systems become more general and useful, access to them should expand alongside their capabilities. We want a future where intelligence is a widely available input to human ambition: helping researchers explore further, small teams build more ambitious products, and individuals turn more of their ideas into reality. Lowering the cost of inference is our first step toward that future.'
 		}
 	]
 } as const;
@@ -253,8 +251,8 @@ Populate `footerPaths` with the exact four headings, descriptions, and destinati
 spec. Reuse these existing email values:
 
 ```ts
-'mailto:founders@arcten.com?subject=Arcten%20inquiry'
-'mailto:founders@arcten.com?subject=Arcten%20API%20access'
+'mailto:founders@arcten.com?subject=Arcten%20inquiry';
+'mailto:founders@arcten.com?subject=Arcten%20API%20access';
 ```
 
 Represent `Private-model preview` as:
@@ -464,7 +462,10 @@ Use semantic markup:
 		<div class="mx-auto w-full max-w-[960px] px-6">
 			<div class="max-w-[760px]">
 				<p class="text-sm font-semibold text-[color:var(--brand)]">{companyCopy.hero.eyebrow}</p>
-				<h1 id="company-heading" class="mt-5 text-4xl leading-tight font-medium tracking-normal sm:text-6xl">
+				<h1
+					id="company-heading"
+					class="mt-5 text-4xl leading-tight font-medium tracking-normal sm:text-6xl"
+				>
 					{companyCopy.hero.heading}
 				</h1>
 				<p class="mt-7 text-lg leading-8 text-muted sm:text-xl sm:leading-9">
@@ -475,10 +476,16 @@ Use semantic markup:
 	</section>
 
 	{#each companyCopy.sections as section, index (section.heading)}
-		<section class="border-b border-foreground/10 py-16 sm:py-20" aria-labelledby={`company-section-${index}`}>
+		<section
+			class="border-b border-foreground/10 py-16 sm:py-20"
+			aria-labelledby={`company-section-${index}`}
+		>
 			<div class="mx-auto w-full max-w-[960px] px-6">
 				<div class="max-w-[760px]">
-					<h2 id={`company-section-${index}`} class="text-2xl font-medium tracking-normal sm:text-3xl">
+					<h2
+						id={`company-section-${index}`}
+						class="text-2xl font-medium tracking-normal sm:text-3xl"
+					>
 						{section.heading}
 					</h2>
 					<p class="mt-5 text-base leading-7 text-muted sm:text-lg sm:leading-8">{section.body}</p>
@@ -784,8 +791,12 @@ Core CSS:
 }
 
 @media (min-width: 640px) {
-	.brand-stage { height: 24rem; }
-	.brand-stage__word { font-size: 8rem; }
+	.brand-stage {
+		height: 24rem;
+	}
+	.brand-stage__word {
+		font-size: 8rem;
+	}
 }
 
 @media (min-width: 1024px) {
@@ -801,11 +812,15 @@ Core CSS:
 		height: 100svh;
 	}
 
-	.brand-stage__word { font-size: 13rem; }
+	.brand-stage__word {
+		font-size: 13rem;
+	}
 }
 
 @media (min-width: 1440px) {
-	.brand-stage__word { font-size: 17rem; }
+	.brand-stage__word {
+		font-size: 17rem;
+	}
 }
 
 @supports (animation-timeline: view()) {
@@ -819,14 +834,29 @@ Core CSS:
 }
 
 @keyframes footer-brand-settle {
-	from { opacity: 0.35; transform: translateY(18%); }
-	to { opacity: 1; transform: translateY(0); }
+	from {
+		opacity: 0.35;
+		transform: translateY(18%);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.brand-stage { height: 24rem; }
-	.brand-stage__sticky { position: relative; height: 100%; }
-	.brand-stage__word { animation: none; opacity: 1; transform: none; }
+	.brand-stage {
+		height: 24rem;
+	}
+	.brand-stage__sticky {
+		position: relative;
+		height: 100%;
+	}
+	.brand-stage__word {
+		animation: none;
+		opacity: 1;
+		transform: none;
+	}
 }
 ```
 

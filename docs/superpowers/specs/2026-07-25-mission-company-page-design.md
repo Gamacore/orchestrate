@@ -167,7 +167,7 @@ or subtly rounded geometry; do not add shadows, gradients, or decorative illustr
 The utility row has three desktop columns:
 
 - `Docs` is the wide column. Its description is `Review Arcten's planned API, completion windows,
-  and request behavior.` and its link routes to `/docs`.
+and request behavior.` and its link routes to `/docs`.
 - `Social` links to Arcten on X and LinkedIn using the existing verified external destinations.
 - `Resources` links to `Pricing` at `/#pricing`, `Service tiers` at `/#use-cases`, `Blog` at
   `/blog`, and `Terms` at `/tos`.

@@ -28,10 +28,10 @@
 				<!-- Section fragments are appended to SvelteKit's resolved base path. -->
 				<!-- eslint-disable svelte/no-navigation-without-resolve -->
 				<a
-					href={item.href === '/docs'
-						? resolve('/docs')
-						: item.href === '/blog'
-							? resolve('/blog')
+					href={item.href.startsWith('https://')
+						? item.href
+						: item.href === '/docs'
+							? resolve('/docs')
 							: `${resolve('/')}${item.href}`}
 					class="inline-flex items-center whitespace-nowrap hover:text-foreground focus-visible:text-foreground"
 				>
@@ -41,25 +41,12 @@
 			{/each}
 		</div>
 
-		<div class="flex items-center gap-3">
-			<a
-				href={resolve('/blog')}
-				class="text-sm font-medium text-muted hover:text-foreground focus-visible:text-foreground md:hidden"
-			>
-				Blog
-			</a>
-			<a
-				href={resolve('/docs')}
-				class="text-sm font-medium text-muted hover:text-foreground focus-visible:text-foreground md:hidden"
-			>
-				Docs
-			</a>
+		<div class="flex items-center">
 			<a
 				href={`${resolve('/')}#access`}
 				class="inline-flex h-10 items-center justify-center rounded-full border border-[color:var(--brand)] bg-[color:var(--brand)] px-4 text-sm font-semibold text-white shadow-[0_10px_30px_rgb(40_70_130_/_0.18)] hover:-translate-y-0.5 hover:bg-[color:var(--brand-strong)] focus-visible:-translate-y-0.5 focus-visible:bg-[color:var(--brand-strong)] sm:h-12 sm:px-6"
 			>
-				<span class="sm:hidden">Access</span>
-				<span class="hidden sm:inline">Request early access</span>
+				Join
 			</a>
 		</div>
 	</nav>

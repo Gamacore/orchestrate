@@ -1,5 +1,13 @@
 import adapter from '@sveltejs/adapter-cloudflare';
 
+const localAdapter = {
+	name: 'local-development',
+	adapt() {},
+	emulate() {
+		return { platform: async () => ({}) };
+	}
+};
+
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
 	compilerOptions: {
@@ -7,11 +15,13 @@ const config = {
 		runes: ({ filename }) => (filename.split(/[/\\]/).includes('node_modules') ? undefined : true)
 	},
 	kit: {
-		adapter: adapter({
-			platformProxy: {
-				persist: false
-			}
-		})
+		adapter: process.env.LOCAL_DEV
+			? localAdapter
+			: adapter({
+					platformProxy: {
+						persist: false
+					}
+				})
 	}
 };
 
